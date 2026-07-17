@@ -124,8 +124,11 @@ class HollowKitSettings(PropertyGroup):
     hole_len_mode: EnumProperty(
         name="穴の長さ",
         items=[
-            ('AUTO', "自動", "最大寸法の 2 倍(確実に貫通)"),
-            ('MANUAL', "手動", "貫通長さを指定"),
+            ('AUTO', "自動",
+             "中空化中: 壁を貫いて空洞に届く長さ(壁厚×2+穴幅×2)。"
+             "反対側の壁など意図しない場所は貫通しない。"
+             "中空化しない場合はモデル全体を貫通"),
+            ('MANUAL', "手動", "掘る長さを指定"),
         ],
         default='AUTO',
         update=_sync_update)

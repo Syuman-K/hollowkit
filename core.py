@@ -575,8 +575,15 @@ def resolve_voxel(st, obj):
 
 
 def resolve_depth(st, obj):
-    """穴の長さを解決する。自動なら最大寸法の 2 倍(確実に貫通)。"""
+    """穴の長さを解決する。
+
+    自動のとき: 中空化中は「壁を貫いて空洞に届くだけ」の長さ(壁厚×2 +
+    穴幅×2)にし、反対側の壁や途中の形状まで貫通させない。斜め刺しでも
+    届くようマージンを含む。中空化しない場合のみ全体を貫通させる。
+    """
     if st.hole_len_mode == 'AUTO':
+        if st.use_hollow:
+            return st.wall_thickness * 2.0 + st.hole_diameter * 2.0
         return max_dimension(obj) * 2.0
     return st.hole_length
 

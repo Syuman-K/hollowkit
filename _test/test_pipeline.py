@@ -337,5 +337,27 @@ print("   markers=1:", {'v': r1['v']}, "vol={:.0f}".format(r1['vol']))
 check(r1['v'] > 0, "非水密メッシュでも消えない(EXACT 自動フォールバック)")
 check(r1['vol'] < r0['vol'], "フォールバック経由でも穴は開いている")
 
+print("\n[15] 自動の穴長は空洞まで(反対側の壁を貫通しない)")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+cube = bpy.context.active_object
+st.use_hollow=True; st.use_holes=True
+st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
+st.hole_diameter=3.0; st.hole_len_mode='AUTO'
+core.apply_to_objects(bpy.context, st, [cube])
+base = analyze(cube)['vol']
+core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
+                     normal=Vector((0,0,-1)))   # 底面、矢印は上(内向き)
+core.sync_modifier(cube, st)
+cut = base - analyze(cube)['vol']
+print("   auto cut = {:.1f} (片壁のみ≈18 / 両壁貫通なら≈36)".format(cut))
+check(10 < cut < 30, "自動長=壁1枚+空洞到達のみ(反対側は無傷)")
+st.use_hollow=False
+core.sync_modifier(cube, st)
+cut_solid = 8000.0 - analyze(cube)['vol']
+print("   非中空 auto cut = {:.1f} (全貫通≈180)".format(cut_solid))
+check(cut_solid > 150, "非中空時の自動長は全体を貫通")
+st.use_hollow=True
+
 print("\n==== RESULT:", "ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}")
 hollowkit.unregister()
