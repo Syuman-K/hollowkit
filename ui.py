@@ -67,6 +67,8 @@ class HOLLOWKIT_PT_main(Panel):
         row = sub.row(align=True)
         row.enabled = is_mesh
         row.operator("hollowkit.add_solid", icon='EMPTY_SINGLE_ARROW')
+        sub.label(text="Shift+右クリックでカーソルを表面に置いてから",
+                  icon='CURSOR')
         if is_mesh:
             ns = core.count_solid_markers(obj)
             sub.label(text="軸マーカー: {} 個".format(ns),
@@ -103,6 +105,8 @@ class HOLLOWKIT_PT_main(Panel):
         row = sub.row(align=True)
         row.enabled = is_mesh
         row.operator("hollowkit.add_hole", icon='EMPTY_SINGLE_ARROW')
+        sub.label(text="Shift+右クリックでカーソルを表面に置いてから",
+                  icon='CURSOR')
         if is_mesh:
             n = core.count_markers(obj)
             sub.label(text="穴マーカー: {} 個".format(n),
@@ -110,6 +114,8 @@ class HOLLOWKIT_PT_main(Panel):
         if has_hollow:
             box.label(text="先に「中空化を確定」を推奨(軽くなる)", icon='INFO')
         if has_drill:
+            box.label(text="マーカーは配置のみ(穴形状をワイヤ表示)", icon='INFO')
+            box.label(text="実際の穴は「穴あけを確定」で開く", icon='INFO')
             dmod = core.get_drill_modifier(obj)
             box.prop(dmod, "show_viewport", text="穴をライブ表示(重い)")
 

@@ -98,6 +98,7 @@ core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
                      normal=Vector((0,0,-1)))
 core.add_hole_marker(bpy.context, cube, location=Vector((10,-5,4)),
                      normal=Vector((1,0,0)))
+core.get_drill_modifier(cube).show_viewport = True   # テストはライブ表示で検証
 core.sync_modifier(cube, st)
 check(core.count_markers(cube)==2, "穴マーカーが2個")
 r = analyze(cube)
@@ -145,13 +146,38 @@ holed_vol = holed_bm.calc_volume(); holed_bm.free()
 print("   shell={:.1f} → holed={:.1f}".format(shell_vol, holed_vol))
 check(holed_vol < shell_vol, "②確定で実際に穴が開いている")
 
-print("\n[7] 解除(clear)")
+print("\n[7] 解除(clear) + 3Dカーソル配置オペレーター")
 clean()
 bpy.ops.mesh.primitive_cube_add(size=20)
 c2 = bpy.context.active_object
 core.apply_to_objects(bpy.context, st, [c2])
+# オペレーター経由: 3Dカーソル位置に置かれ、矢印は最寄り面の内向きになる
+bpy.context.scene.cursor.location = (6.0, 5.0, -10.0)   # 底面上の一点
+res = bpy.ops.hollowkit.add_hole()
+check('FINISHED' in res, "add_hole オペレーター成功")
+bpy.context.view_layer.update()
+coll = core.get_hole_collection(c2, create=False)
+mk = coll.objects[0]
+pos = mk.matrix_world.translation
+arrow = (mk.matrix_world.to_3x3() @ Vector((0,0,1))).normalized()
+print("   marker pos={} arrow={}".format(tuple(round(c,3) for c in pos),
+                                         tuple(round(c,3) for c in arrow)))
+check((pos - Vector((6,5,-10))).length < 1e-4, "マーカーが3Dカーソル位置に出る")
+check(arrow.z > 0.99, "矢印が最寄り面(底面)の内向き(+Z)になる")
+dm = core.get_drill_modifier(c2)
+check(dm is not None and dm.show_viewport == False,
+      "穴あけはライブ計算しない(既定OFF, 配置のみ)")
+check(core.get_hole_preview(c2) is not None,
+      "穴形状ワイヤプレビュー物体が自動生成される")
+hp = core.get_hole_preview(c2)
+dgh = bpy.context.evaluated_depsgraph_get()
+hme = hp.evaluated_get(dgh).to_mesh()
+check(len(hme.vertices) == 8, "ワイヤプレビューに直方体1個(8頂点)が出る")
+hp.evaluated_get(dgh).to_mesh_clear()
+bpy.context.scene.cursor.location = (0.0, 0.0, 0.0)   # 後続テストのため戻す
 core.add_hole_marker(bpy.context, c2, location=Vector((0,0,-10)))
 core.remove_from_object(c2, remove_markers=True)
+check(core.get_hole_preview(c2) is None, "解除で穴形状プレビューも消える")
 check(core.get_hollow_modifier(c2) is None, "解除でモディファイア削除")
 check(core.count_markers(c2)==0, "解除でマーカー削除")
 
@@ -222,6 +248,7 @@ st.hole_len_mode='MANUAL'; st.hole_length=100.0
 core.sync_modifier(cube, st)
 core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
                      normal=Vector((0,0,-1)))
+core.get_drill_modifier(cube).show_viewport = True
 core.sync_modifier(cube, st)
 vol_live = analyze(cube)['vol']
 core.freeze_object(bpy.context, cube)
@@ -294,6 +321,7 @@ st.hole_diameter=3.0
 st.hole_len_mode='MANUAL'; st.hole_length=100.0
 hm = core.add_hole_marker(bpy.context, cube, location=Vector((10,0,0)),
                           normal=Vector((1,0,0)))   # 矢印 -X 内向き
+core.get_drill_modifier(cube).show_viewport = True
 core.sync_modifier(cube, st)
 cut_in = base_vol - analyze(cube)['vol']
 core._aim_z(hm, Vector((1,0,0)))                    # 矢印 +X 外向き
@@ -321,6 +349,7 @@ core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
                      normal=Vector((0,0,-1)))
 core.add_hole_marker(bpy.context, cube, location=Vector((-5,4,-10)),
                      normal=Vector((0,0,-1)))
+core.get_drill_modifier(cube).show_viewport = True
 core.sync_modifier(cube, st)
 r = analyze(cube)
 print("   Manifold:", {k: r[k] for k in ('v','nonman','shells')},
@@ -344,6 +373,7 @@ print("   markers=0:", {'v': r0['v']}, "vol={:.0f}".format(r0['vol']))
 check(r0['v'] > 0, "穴あけON+マーカー0でもメッシュが消えない(スキップ)")
 core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
                      normal=Vector((0,0,-1)))
+core.get_drill_modifier(cube).show_viewport = True
 core.sync_modifier(cube, st)
 r1 = analyze(cube)   # Manifold は空を返す → EXACT へ自動フォールバック
 print("   markers=1:", {'v': r1['v']}, "vol={:.0f}".format(r1['vol']))
@@ -361,6 +391,7 @@ core.apply_to_objects(bpy.context, st, [cube])
 base = analyze(cube)['vol']
 core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
                      normal=Vector((0,0,-1)))   # 底面、矢印は上(内向き)
+core.get_drill_modifier(cube).show_viewport = True
 core.sync_modifier(cube, st)
 cut = base - analyze(cube)['vol']
 print("   auto cut = {:.1f} (片壁のみ≈18 / 両壁貫通なら≈36)".format(cut))

@@ -7,7 +7,6 @@
 
 import bpy
 from bpy.types import Operator
-from bpy_extras import view3d_utils
 from mathutils import Vector
 
 from . import core
@@ -53,7 +52,11 @@ class HOLLOWKIT_OT_apply(Operator):
 
 
 class _MarkerPlaceMixin:
-    """ビュークリック位置(または 3D カーソル)へのマーカー配置の共通処理。"""
+    """3D カーソル位置へのマーカー配置の共通処理。
+
+    位置は常に 3D カーソル(Shift+右クリックで表面に置ける)。向きは対象
+    メッシュの最寄り表面の法線からモデル内側向きに自動設定する。
+    """
 
     # サブクラスで設定する
     _add_func = None          # core.add_*_marker
@@ -64,41 +67,27 @@ class _MarkerPlaceMixin:
         obj = context.active_object
         return obj is not None and obj.type == 'MESH'
 
-    def _place_from_mouse(self, context, event):
-        """マウス下の表面にレイキャストして (位置, 法線) を返す。無ければ None。"""
-        region = context.region
-        rv3d = context.region_data
-        if region is None or rv3d is None:
-            return None
-        coord = (event.mouse_x - region.x, event.mouse_y - region.y)
-        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
-        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord)
-        depsgraph = context.evaluated_depsgraph_get()
-        result, location, normal, index, obj, matrix = context.scene.ray_cast(
-            depsgraph, origin, direction)
-        if not result:
-            return None
-        return location, normal
-
-    def invoke(self, context, event):
-        obj = context.active_object
-        hit = self._place_from_mouse(context, event)
-        if hit is not None:
-            location, normal = hit
-            type(self)._add_func(context, obj, location=location, normal=normal)
-            self.report({'INFO'}, "{}を表面に追加しました".format(self._label))
-            return {'FINISHED'}
-        return self.execute(context)
-
     def execute(self, context):
         obj = context.active_object
-        # クリック位置が取れない場合は 3D カーソル位置に、モデル中心へ向けて置く。
         cursor = context.scene.cursor.location.copy()
-        center = obj.matrix_world.translation.copy()
-        outward = cursor - center
-        type(self)._add_func(
-            context, obj, location=cursor,
-            normal=outward if outward.length > 1e-6 else Vector((0, 0, 1)))
+
+        # 最寄り表面の法線を取り、矢印をモデル内側へ向ける。
+        normal = None
+        try:
+            depsgraph = context.evaluated_depsgraph_get()
+            local = obj.matrix_world.inverted() @ cursor
+            found, co, nrm, index = obj.closest_point_on_mesh(
+                local, depsgraph=depsgraph)
+            if found:
+                normal = (obj.matrix_world.to_3x3() @ nrm).normalized()
+        except Exception:
+            normal = None
+        if normal is None or normal.length < 1e-6:
+            # フォールバック: モデル中心から外向きとみなす。
+            outward = cursor - obj.matrix_world.translation
+            normal = outward if outward.length > 1e-6 else Vector((0, 0, 1))
+
+        type(self)._add_func(context, obj, location=cursor, normal=normal)
         self.report({'INFO'},
                     "{}を 3D カーソル位置に追加しました".format(self._label))
         return {'FINISHED'}
@@ -107,8 +96,9 @@ class _MarkerPlaceMixin:
 class HOLLOWKIT_OT_add_hole(_MarkerPlaceMixin, Operator):
     bl_idname = "hollowkit.add_hole"
     bl_label = "穴マーカーを追加"
-    bl_description = ("穴(排出/エア抜き)を掘る位置に矢印マーカーを追加する。"
-                     "ビューでクリックした表面に置かれ、矢印の方向へ掘られる。"
+    bl_description = ("3D カーソルの位置に穴(排出/エア抜き)の矢印マーカーを"
+                     "追加する。Shift+右クリックでカーソルを表面に置いてから"
+                     "押す。矢印の方向へ掘られる(自動で内向きになる)。"
                      "初回追加時に穴あけ(段階②)のモディファイアが自動で付く")
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -119,9 +109,10 @@ class HOLLOWKIT_OT_add_hole(_MarkerPlaceMixin, Operator):
 class HOLLOWKIT_OT_add_solid(_MarkerPlaceMixin, Operator):
     bl_idname = "hollowkit.add_solid"
     bl_label = "軸マーカーを追加"
-    bl_description = ("軸打ちしたい位置(ダボ面など)に矢印マーカーを追加する。"
-                     "マーカーから矢印方向へ「軸柱の長さ」ぶん中実の柱が残り、"
-                     "軸(真鍮線など)を差し込める。あとで移動・回転して調整できる")
+    bl_description = ("3D カーソルの位置(ダボ面など)に軸打ち用の矢印マーカーを"
+                     "追加する。Shift+右クリックでカーソルを表面に置いてから"
+                     "押す。マーカーから矢印方向へ「軸柱の長さ」ぶん中実の柱が"
+                     "残り、軸(真鍮線など)を差し込める。移動・回転で調整可")
     bl_options = {'REGISTER', 'UNDO'}
 
     _add_func = staticmethod(core.add_solid_marker)
