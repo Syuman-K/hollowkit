@@ -22,7 +22,7 @@ from mathutils import Vector
 # ---- 定数 -------------------------------------------------------------------
 
 NODE_GROUP = "HollowKit"          # 共有ノードグループ名
-NG_VERSION = 6                    # ノードグループ構造のバージョン(変更時に再生成)
+NG_VERSION = 7                    # ノードグループ構造のバージョン(変更時に再生成)
 MODIFIER = "HollowKit"            # 各オブジェクトに付くモディファイア名
 HOLE_COLL_PREFIX = "HK_穴_"       # オブジェクトごとの穴マーカーコレクション接頭辞
 HOLE_MARKER_PREFIX = "HK_穴マーカー"
@@ -302,14 +302,14 @@ def _build_node_group():
     s_i2p = N("GeometryNodeInstancesToPoints")
     L(s_col.outputs["Instances"], s_i2p.inputs["Instances"])
 
-    s_rad = N("ShaderNodeMath"); s_rad.operation = 'MULTIPLY'
-    s_rad.inputs[1].default_value = 0.5
-    L(gi(S_SOLID_DIA), s_rad.inputs[0])
-    s_cyl = N("GeometryNodeMeshCylinder")
-    s_cyl.inputs["Vertices"].default_value = 32
-    L(s_rad.outputs[0], s_cyl.inputs["Radius"])
-    L(gi(S_SOLID_LEN), s_cyl.inputs["Depth"])
-    # シリンダーは中心原点なので +Z へ半分ずらし、マーカー位置から先へ伸ばす。
+    # 柱も直方体(8頂点)でブーリアンを軽くする。幅=軸柱の幅、奥行=長さ。
+    s_size = N("ShaderNodeCombineXYZ")
+    L(gi(S_SOLID_DIA), s_size.inputs["X"])
+    L(gi(S_SOLID_DIA), s_size.inputs["Y"])
+    L(gi(S_SOLID_LEN), s_size.inputs["Z"])
+    s_cyl = N("GeometryNodeMeshCube")
+    L(s_size.outputs["Vector"], s_cyl.inputs["Size"])
+    # 直方体は中心原点なので +Z へ半分ずらし、マーカー位置から先へ伸ばす。
     s_half = N("ShaderNodeMath"); s_half.operation = 'DIVIDE'
     s_half.inputs[1].default_value = 2.0
     L(gi(S_SOLID_LEN), s_half.inputs[0])
@@ -370,16 +370,17 @@ def _build_node_group():
     i2p = N("GeometryNodeInstancesToPoints")
     L(colinfo.outputs["Instances"], i2p.inputs["Instances"])
 
-    radius = N("ShaderNodeMath"); radius.operation = 'MULTIPLY'
-    radius.inputs[1].default_value = 0.5
-    L(gi(S_HOLE_DIA), radius.inputs[0])
-    cyl = N("GeometryNodeMeshCylinder")
-    cyl.inputs["Vertices"].default_value = 32
-    L(radius.outputs[0], cyl.inputs["Radius"])
-    L(gi(S_HOLE_LEN), cyl.inputs["Depth"])
+    # ドリルは直方体(8頂点)。円柱よりブーリアンが大幅に軽く、排出穴の
+    # 用途では形状の差は問題にならない。幅=穴の幅、奥行=穴の長さ。
+    h_size = N("ShaderNodeCombineXYZ")
+    L(gi(S_HOLE_DIA), h_size.inputs["X"])
+    L(gi(S_HOLE_DIA), h_size.inputs["Y"])
+    L(gi(S_HOLE_LEN), h_size.inputs["Z"])
+    cyl = N("GeometryNodeMeshCube")
+    L(h_size.outputs["Vector"], cyl.inputs["Size"])
 
     # ドリルはマーカー位置から矢印(+Z)方向へ掘る。マーカーが表面ぴったりに
-    # あっても壁を確実に切れるよう、後方に穴径ぶんだけはみ出させる。
+    # あっても壁を確実に切れるよう、後方に穴幅ぶんだけはみ出させる。
     h_half = N("ShaderNodeMath"); h_half.operation = 'DIVIDE'
     h_half.inputs[1].default_value = 2.0
     L(gi(S_HOLE_LEN), h_half.inputs[0])

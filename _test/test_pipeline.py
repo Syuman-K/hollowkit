@@ -197,9 +197,9 @@ core.sync_modifier(cube, st)
 r = analyze(cube)
 print("   ", r, "base_vol={:.1f}".format(base_vol))
 check(core.count_solid_markers(cube)==1, "軸マーカーが1個")
-# 柱∩空洞 = π×4²×13 ≈ 653mm³ ぶん中身が増える
+# 柱∩空洞 = 8×8×13 = 832mm³ ぶん中身が増える(四角柱)
 gain = r['vol'] - base_vol
-check(550 < gain < 750, "柱のぶん体積が増える(≈653mm³, 実測 {:.0f})".format(gain))
+check(700 < gain < 950, "柱のぶん体積が増える(≈832mm³, 実測 {:.0f})".format(gain))
 check(r['nonman']==0, "柱入りでも水密")
 check(r['shells']==2, "柱は空洞壁と一体(2シェルのまま)")
 
@@ -269,9 +269,9 @@ gain_in = analyze(cube)['vol'] - base_vol
 # 矢印を +X(外向き)に反転 → 柱はほぼ外=体積増ほぼ無し
 core._aim_z(m, Vector((1,0,0)))
 gain_out = analyze(cube)['vol'] - base_vol
-print("   pillar: 内向き gain={:.0f} (期待≈653) / 外向き gain={:.0f} (期待≈0)".format(
+print("   pillar: 内向き gain={:.0f} (期待≈832) / 外向き gain={:.0f} (期待≈0)".format(
     gain_in, gain_out))
-check(550 < gain_in < 750, "柱が矢印(内向き-X)方向に生える")
+check(700 < gain_in < 950, "柱が矢印(内向き-X)方向に生える")
 check(gain_out < 100, "矢印を外向きにすると柱は生えない(方向追従)")
 core.delete_solid_collection(cube)
 core.sync_modifier(cube, st)
@@ -285,10 +285,10 @@ core.sync_modifier(cube, st)
 cut_in = base_vol - analyze(cube)['vol']
 core._aim_z(hm, Vector((1,0,0)))                    # 矢印 +X 外向き
 cut_out = base_vol - analyze(cube)['vol']
-print("   hole: 内向き cut={:.1f} (両壁≈28) / 外向き cut={:.1f} (片壁≈14)".format(
+print("   hole: 内向き cut={:.1f} (両壁≈36) / 外向き cut={:.1f} (片壁≈18)".format(
     cut_in, cut_out))
 check(cut_in > cut_out + 5, "穴が矢印方向へ掘られる(内向き=両壁貫通)")
-check(5 < cut_out < 25, "外向き矢印は手前の壁だけ切る")
+check(10 < cut_out < 30, "外向き矢印は手前の壁だけ切る")
 
 print("\n[13] 高密度メッシュの穴あけ(Manifold ソルバー)")
 clean()

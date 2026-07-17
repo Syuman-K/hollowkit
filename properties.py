@@ -98,10 +98,10 @@ class HollowKitSettings(PropertyGroup):
 
     # --- 軸打ち用の中実柱 (キャッシュ後段なので固定中もライブ反映) ---
     solid_diameter: FloatProperty(
-        name="軸柱の径",
+        name="軸柱の幅",
         default=10.0, min=0.0, soft_max=50.0, precision=2, unit='LENGTH',
-        description="軸マーカー位置に残す中実柱の直径。使う軸(真鍮線など)の"
-                    "径より十分太くする(3mm 軸なら 8〜12mm 目安)",
+        description="軸マーカー位置に残す中実の四角柱の幅(一辺)。使う軸"
+                    "(真鍮線など)の径より十分太くする(3mm 軸なら 8〜12mm 目安)",
         update=_sync_update)
     solid_length: FloatProperty(
         name="軸柱の長さ",
@@ -117,9 +117,9 @@ class HollowKitSettings(PropertyGroup):
                     "中空部を外へ通じさせる(レジン排出・エア抜き)",
         update=_sync_update)
     hole_diameter: FloatProperty(
-        name="穴の径",
+        name="穴の幅",
         default=3.0, min=0.0, soft_max=20.0, precision=3, unit='LENGTH',
-        description="排出/エア抜き穴の直径。光造形では 2〜4mm が目安",
+        description="排出/エア抜きの四角穴の幅(一辺)。光造形では 2〜4mm が目安",
         update=_sync_update)
     hole_len_mode: EnumProperty(
         name="穴の長さ",
