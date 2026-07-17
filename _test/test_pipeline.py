@@ -179,5 +179,76 @@ check(r0['shells']==4, "全て残す: 4シェル")
 check(r0['vol'] < r['vol'], "小空洞のぶん体積が減る")
 st.cavity_mode='LARGEST'
 
+print("\n[9] 軸打ち用の中実柱(軸マーカー)")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+cube = bpy.context.active_object
+st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
+st.cavity_mode='LARGEST'
+st.solid_diameter=8.0; st.solid_length=15.0
+core.apply_to_objects(bpy.context, st, [cube])
+base_vol = analyze(cube)['vol']
+# 底面中央に軸マーカー(矢印は上=内側へ)。柱は z=-10..+5、空洞は z=-8..8
+core.add_solid_marker(bpy.context, cube, location=Vector((0,0,-10)),
+                      normal=Vector((0,0,-1)))
+core.sync_modifier(cube, st)
+r = analyze(cube)
+print("   ", r, "base_vol={:.1f}".format(base_vol))
+check(core.count_solid_markers(cube)==1, "軸マーカーが1個")
+# 柱∩空洞 = π×4²×13 ≈ 653mm³ ぶん中身が増える
+gain = r['vol'] - base_vol
+check(550 < gain < 750, "柱のぶん体積が増える(≈653mm³, 実測 {:.0f})".format(gain))
+check(r['nonman']==0, "柱入りでも水密")
+check(r['shells']==2, "柱は空洞壁と一体(2シェルのまま)")
+
+print("\n[10] 中空化キャッシュ(固定)")
+st.use_holes=True; st.hole_diameter=3.0
+st.hole_len_mode='MANUAL'; st.hole_length=100.0
+core.sync_modifier(cube, st)
+core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
+                     normal=Vector((0,0,-1)))
+core.sync_modifier(cube, st)
+vol_live = analyze(cube)['vol']
+core.freeze_object(bpy.context, cube)
+check(core.is_frozen(cube), "固定状態になっている")
+check(bpy.data.objects.get(core.CACHE_PREFIX + cube.name) is not None,
+      "キャッシュオブジェクトが存在")
+vol_frozen = analyze(cube)['vol']
+print("   live={:.1f} frozen={:.1f}".format(vol_live, vol_frozen))
+check(abs(vol_frozen - vol_live) < 50, "固定前後で結果が一致")
+# 固定中でも穴マーカー追加が反映される(軽い経路)
+core.add_hole_marker(bpy.context, cube, location=Vector((-6,-5,-10)),
+                     normal=Vector((0,0,-1)))
+vol2 = analyze(cube)['vol']
+check(vol2 < vol_frozen, "固定中も穴追加が反映(体積減)")
+# 固定中でも軸マーカー追加が反映される(柱はキャッシュ後段)
+core.add_solid_marker(bpy.context, cube, location=Vector((0,10,0)),
+                      normal=Vector((0,1,0)))
+vol3 = analyze(cube)['vol']
+check(core.is_frozen(cube), "軸マーカー追加後も固定のまま")
+check(vol3 > vol2, "固定中も軸柱追加が反映(体積増)")
+# 中空化パラメータ変更で自動解除
+bpy.context.view_layer.objects.active = cube
+st.wall_thickness = 3.0
+check(not core.is_frozen(cube), "壁厚変更でキャッシュ自動解除")
+st.wall_thickness = 2.0
+
+print("\n[11] 空洞プレビュー")
+pv = core.create_preview(bpy.context, cube, st)
+check(pv is not None, "プレビュー物体が作成される")
+check(core.get_modifier(cube).show_viewport == False,
+      "プレビュー中は本体モディファイア表示OFF")
+dg = bpy.context.evaluated_depsgraph_get()
+pme = pv.evaluated_get(dg).to_mesh()
+pv_verts = len(pme.vertices)
+pv.evaluated_get(dg).to_mesh_clear()
+print("   preview verts:", pv_verts)
+check(pv_verts > 100, "プレビューに空洞ジオメトリがある")
+core.remove_preview(cube)
+check(core.get_preview(cube) is None, "プレビュー終了で物体が消える")
+check(core.get_modifier(cube).show_viewport == True,
+      "終了で本体モディファイア表示が戻る")
+
 print("\n==== RESULT:", "ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}")
 hollowkit.unregister()

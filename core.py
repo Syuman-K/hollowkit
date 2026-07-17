@@ -22,10 +22,14 @@ from mathutils import Vector
 # ---- 定数 -------------------------------------------------------------------
 
 NODE_GROUP = "HollowKit"          # 共有ノードグループ名
-NG_VERSION = 3                    # ノードグループ構造のバージョン(変更時に再生成)
+NG_VERSION = 4                    # ノードグループ構造のバージョン(変更時に再生成)
 MODIFIER = "HollowKit"            # 各オブジェクトに付くモディファイア名
 HOLE_COLL_PREFIX = "HK_穴_"       # オブジェクトごとの穴マーカーコレクション接頭辞
 HOLE_MARKER_PREFIX = "HK_穴マーカー"
+SOLID_COLL_PREFIX = "HK_軸_"      # 軸打ち用・中実柱マーカーコレクション接頭辞
+SOLID_MARKER_PREFIX = "HK_軸マーカー"
+CACHE_PREFIX = "HK_cache_"        # 中空化キャッシュ(隠しメッシュ)接頭辞
+PREVIEW_PREFIX = "HK_プレビュー_"  # 空洞プレビュー物体の接頭辞
 
 # グループ入力ソケット名(表示名 / 内部の値マッピングキーを兼ねる)
 S_GEO = "ジオメトリ"
@@ -39,9 +43,18 @@ S_HOLE_LEN = "穴の長さ"
 S_HOLE_COLL = "穴コレクション"
 S_MIN_CAV = "最小空洞径"
 S_ONLY_LARGEST = "最大の空洞のみ"
+S_SOLID_COLL = "軸コレクション"
+S_SOLID_DIA = "軸柱の径"
+S_SOLID_LEN = "軸柱の長さ"
+S_USE_CACHE = "キャッシュ使用"
+S_CACHE_OBJ = "キャッシュ"
+S_PREVIEW = "プレビュー出力"     # 内部用: 空洞(+柱)だけを出力(プレビュー物体)
+S_CAPTURE = "キャッシュ取得"     # 内部用: 柱を引く前の生空洞を出力(freeze 用)
 
 INPUT_ORDER = (S_GEO, S_HOLLOW, S_WALL, S_VOXEL, S_ADAPT,
                S_ONLY_LARGEST, S_MIN_CAV,
+               S_SOLID_COLL, S_SOLID_DIA, S_SOLID_LEN,
+               S_USE_CACHE, S_CACHE_OBJ, S_PREVIEW, S_CAPTURE,
                S_DRILL, S_HOLE_DIA, S_HOLE_LEN, S_HOLE_COLL)
 
 
@@ -114,6 +127,15 @@ def _build_node_group():
     _new_input(ng, S_ONLY_LARGEST, 'NodeSocketBool', default=True)
     _new_input(ng, S_MIN_CAV, 'NodeSocketFloat', default=5.0, min_value=0.0,
                subtype='DISTANCE')
+    _new_input(ng, S_SOLID_COLL, 'NodeSocketCollection')
+    _new_input(ng, S_SOLID_DIA, 'NodeSocketFloat', default=10.0, min_value=0.0,
+               subtype='DISTANCE')
+    _new_input(ng, S_SOLID_LEN, 'NodeSocketFloat', default=20.0, min_value=0.0,
+               subtype='DISTANCE')
+    _new_input(ng, S_USE_CACHE, 'NodeSocketBool', default=False)
+    _new_input(ng, S_CACHE_OBJ, 'NodeSocketObject')
+    _new_input(ng, S_PREVIEW, 'NodeSocketBool', default=False)
+    _new_input(ng, S_CAPTURE, 'NodeSocketBool', default=False)
     _new_input(ng, S_DRILL, 'NodeSocketBool', default=True)
     _new_input(ng, S_HOLE_DIA, 'NodeSocketFloat', default=3.0, min_value=0.0,
                subtype='DISTANCE')
@@ -248,9 +270,65 @@ def _build_node_group():
     L(tri.outputs["Mesh"], del_small.inputs["Geometry"])
     L(sel.outputs["Output"], del_small.inputs["Selection"])
 
+    # --- 軸打ち用の中実柱(軸マーカー) -----------------------------------
+    # 軸マーカーの位置・向きに柱(シリンダー)を作り、空洞から差し引く。
+    # 柱の部分は中実のまま残るので、ダボ面からの軸打ちができる。
+    # 柱はマーカー位置から矢印(+Z)方向へ「軸柱の長さ」ぶん伸びる。
+    s_col = N("GeometryNodeCollectionInfo")
+    s_col.transform_space = 'RELATIVE'
+    s_col.inputs["Separate Children"].default_value = True
+    s_col.inputs["Reset Children"].default_value = False
+    L(gi(S_SOLID_COLL), s_col.inputs["Collection"])
+    s_i2p = N("GeometryNodeInstancesToPoints")
+    L(s_col.outputs["Instances"], s_i2p.inputs["Instances"])
+
+    s_rad = N("ShaderNodeMath"); s_rad.operation = 'MULTIPLY'
+    s_rad.inputs[1].default_value = 0.5
+    L(gi(S_SOLID_DIA), s_rad.inputs[0])
+    s_cyl = N("GeometryNodeMeshCylinder")
+    s_cyl.inputs["Vertices"].default_value = 32
+    L(s_rad.outputs[0], s_cyl.inputs["Radius"])
+    L(gi(S_SOLID_LEN), s_cyl.inputs["Depth"])
+    # シリンダーは中心原点なので +Z へ半分ずらし、マーカー位置から先へ伸ばす。
+    s_half = N("ShaderNodeMath"); s_half.operation = 'DIVIDE'
+    s_half.inputs[1].default_value = 2.0
+    L(gi(S_SOLID_LEN), s_half.inputs[0])
+    s_off = N("ShaderNodeCombineXYZ")
+    L(s_half.outputs[0], s_off.inputs["Z"])
+    s_tr = N("GeometryNodeTransform")
+    L(s_cyl.outputs["Mesh"], s_tr.inputs["Geometry"])
+    L(s_off.outputs["Vector"], s_tr.inputs["Translation"])
+
+    s_rot = N("GeometryNodeInputInstanceRotation")
+    s_iop = N("GeometryNodeInstanceOnPoints")
+    L(s_i2p.outputs["Points"], s_iop.inputs["Points"])
+    L(s_tr.outputs["Geometry"], s_iop.inputs["Instance"])
+    L(s_rot.outputs["Rotation"], s_iop.inputs["Rotation"])
+    s_real = N("GeometryNodeRealizeInstances")
+    L(s_iop.outputs["Instances"], s_real.inputs["Geometry"])
+
+    # --- 空洞キャッシュ切替 ---------------------------------------------
+    # 「キャッシュ使用」時は、確定済みの生空洞(柱を引く前・隠しメッシュ)を
+    # 使い、重い SDF 計算を飛ばす。柱・穴あけはキャッシュの後段なので、
+    # 軸マーカー・穴マーカーとも軽いブーリアンだけで再計算される。
+    cache_info = N("GeometryNodeObjectInfo")
+    cache_info.transform_space = 'RELATIVE'
+    L(gi(S_CACHE_OBJ), cache_info.inputs["Object"])
+    sw_cav = N("GeometryNodeSwitch"); sw_cav.input_type = 'GEOMETRY'
+    L(gi(S_USE_CACHE), sw_cav.inputs["Switch"])
+    L(del_small.outputs["Geometry"], sw_cav.inputs["False"])
+    L(cache_info.outputs["Geometry"], sw_cav.inputs["True"])
+
+    s_bool = N("GeometryNodeMeshBoolean")
+    s_bool.operation = 'DIFFERENCE'
+    if "Self Intersection" in s_bool.inputs:
+        s_bool.inputs["Self Intersection"].default_value = True
+    L(sw_cav.outputs["Output"], s_bool.inputs["Mesh 1"])
+    L(s_real.outputs["Geometry"], s_bool.inputs["Mesh 2"])
+
     # 面を反転して空洞(内向き法線)にし、元ジオメトリと結合して殻にする。
     flip = N("GeometryNodeFlipFaces")
-    L(del_small.outputs["Geometry"], flip.inputs["Mesh"])
+    L(s_bool.outputs["Mesh"], flip.inputs["Mesh"])
     join = N("GeometryNodeJoinGeometry")
     L(gi(S_GEO), join.inputs[0])
     L(flip.outputs["Mesh"], join.inputs[0])
@@ -300,7 +378,19 @@ def _build_node_group():
     L(base, sw_drill.inputs["False"])
     L(drill.outputs["Mesh"], sw_drill.inputs["True"])
 
-    L(sw_drill.outputs["Output"], gout.inputs[0])
+    # --- 出力切替(内部用) -----------------------------------------------
+    # プレビュー出力: 空洞(+柱)だけを出す(プレビュー物体のワイヤ表示用)。
+    # キャッシュ取得: 柱を引く前の生空洞を出す(freeze がこれを保存する)。
+    sw_prev = N("GeometryNodeSwitch"); sw_prev.input_type = 'GEOMETRY'
+    L(gi(S_PREVIEW), sw_prev.inputs["Switch"])
+    L(sw_drill.outputs["Output"], sw_prev.inputs["False"])
+    L(s_bool.outputs["Mesh"], sw_prev.inputs["True"])
+    sw_cap = N("GeometryNodeSwitch"); sw_cap.input_type = 'GEOMETRY'
+    L(gi(S_CAPTURE), sw_cap.inputs["Switch"])
+    L(sw_prev.outputs["Output"], sw_cap.inputs["False"])
+    L(del_small.outputs["Geometry"], sw_cap.inputs["True"])
+
+    L(sw_cap.outputs["Output"], gout.inputs[0])
     ng["hk_version"] = NG_VERSION
     return ng
 
@@ -331,28 +421,27 @@ def ensure_modifier(obj, ng):
     return mod
 
 
-def sync_modifier(obj, st):
-    """シーン設定の値をオブジェクトのモディファイア入力へ書き込む。"""
-    mod = get_modifier(obj)
-    if mod is None:
-        return False
-    ng = mod.node_group or ensure_node_group()
-    ids = input_identifiers(ng)
-    voxel = resolve_voxel(st, obj)
-    depth = resolve_depth(st, obj)
-    values = {
+def _build_values(st, obj):
+    """シーン設定からモディファイア入力値の辞書を作る。"""
+    return {
         S_HOLLOW: st.use_hollow,
         S_WALL: st.wall_thickness,
-        S_VOXEL: voxel,
+        S_VOXEL: resolve_voxel(st, obj),
         S_ADAPT: st.adaptivity,
         S_ONLY_LARGEST: st.cavity_mode == 'LARGEST',
         S_MIN_CAV: (st.min_cavity_size
                     if st.cavity_mode == 'THRESHOLD' else 0.0),
+        S_SOLID_COLL: get_solid_collection(obj, create=False),
+        S_SOLID_DIA: st.solid_diameter,
+        S_SOLID_LEN: st.solid_length,
         S_DRILL: st.use_holes,
         S_HOLE_DIA: st.hole_diameter,
-        S_HOLE_LEN: depth,
+        S_HOLE_LEN: resolve_depth(st, obj),
         S_HOLE_COLL: get_hole_collection(obj, create=False),
     }
+
+
+def _write_values(mod, ids, values):
     for name, val in values.items():
         ident = ids.get(name)
         if ident is None:
@@ -361,7 +450,35 @@ def sync_modifier(obj, st):
             mod[ident] = val
         except Exception:
             pass
-    mod.show_viewport = True
+
+
+def sync_modifier(obj, st):
+    """シーン設定の値をオブジェクト(とプレビュー物体)のモディファイアへ
+    書き込む。S_USE_CACHE / S_CACHE_OBJ は freeze/unfreeze が管理する。"""
+    mod = get_modifier(obj)
+    if mod is None:
+        return False
+    ng = mod.node_group or ensure_node_group()
+    ids = input_identifiers(ng)
+    values = _build_values(st, obj)
+    _write_values(mod, ids, values)
+
+    # 空洞プレビュー中は本体の再計算を止め、プレビュー物体だけ更新する。
+    pv = get_preview(obj)
+    mod.show_viewport = (pv is None)
+    if pv is not None:
+        pmod = pv.modifiers.get(MODIFIER)
+        if pmod is not None and pmod.type == 'NODES' \
+                and pmod.node_group is not None:
+            pids = input_identifiers(pmod.node_group)
+            _write_values(pmod, pids, values)
+            try:
+                pmod[pids[S_PREVIEW]] = True
+                pmod[pids[S_USE_CACHE]] = mod[ids[S_USE_CACHE]]
+                pmod[pids[S_CACHE_OBJ]] = mod[ids[S_CACHE_OBJ]]
+            except Exception:
+                pass
+        pv.update_tag()
     obj.update_tag()
     return True
 
@@ -387,6 +504,8 @@ def apply_to_objects(context, st, objs):
     for obj in objs:
         ensure_modifier(obj, ng)
         get_hole_collection(obj, create=True)   # 穴コレクションを用意
+        get_solid_collection(obj, create=True)  # 軸コレクションを用意
+        unfreeze_object(obj)                    # 更新時はキャッシュを作り直し
         sync_modifier(obj, st)
         done.append(obj)
     return done
@@ -403,11 +522,14 @@ def sync_active(context):
 
 
 def remove_from_object(obj, remove_markers=True):
+    remove_preview(obj)
     mod = get_modifier(obj)
     if mod is not None:
         obj.modifiers.remove(mod)
+    delete_cache(obj)
     if remove_markers:
         delete_hole_collection(obj)
+        delete_solid_collection(obj)
 
 
 def bake_object(context, obj):
@@ -425,28 +547,37 @@ def bake_object(context, obj):
 
 # ---- 穴マーカー(Empty)管理 -------------------------------------------------
 
-def _hole_coll_name(obj):
-    return HOLE_COLL_PREFIX + obj.name
+def _root_collection():
+    """HollowKit の管理物(マーカー/キャッシュ/プレビュー)用の親コレクション。"""
+    parent = bpy.data.collections.get("HollowKit")
+    if parent is None:
+        parent = bpy.data.collections.new("HollowKit")
+        bpy.context.scene.collection.children.link(parent)
+    return parent
 
 
-def get_hole_collection(obj, create=True):
-    """オブジェクト専用の穴マーカーコレクションを返す。"""
-    name = _hole_coll_name(obj)
+def _marker_collection(obj, prefix, create=True):
+    """オブジェクト専用のマーカーコレクションを返す。"""
+    name = prefix + obj.name
     coll = bpy.data.collections.get(name)
     if coll is None and create:
         coll = bpy.data.collections.new(name)
-        # シーンに紐付ける(表示のため)。親コレクションが無ければシーン直下。
-        parent = bpy.data.collections.get("HollowKit")
-        if parent is None:
-            parent = bpy.data.collections.new("HollowKit")
-            bpy.context.scene.collection.children.link(parent)
+        parent = _root_collection()
         if name not in [c.name for c in parent.children]:
             parent.children.link(coll)
     return coll
 
 
-def delete_hole_collection(obj):
-    coll = bpy.data.collections.get(_hole_coll_name(obj))
+def get_hole_collection(obj, create=True):
+    return _marker_collection(obj, HOLE_COLL_PREFIX, create)
+
+
+def get_solid_collection(obj, create=True):
+    return _marker_collection(obj, SOLID_COLL_PREFIX, create)
+
+
+def _delete_marker_collection(obj, prefix):
+    coll = bpy.data.collections.get(prefix + obj.name)
     if coll is None:
         return
     for o in list(coll.objects):
@@ -454,14 +585,21 @@ def delete_hole_collection(obj):
     bpy.data.collections.remove(coll)
 
 
-def add_hole_marker(context, obj, location=None, normal=None):
-    """穴マーカー(矢印 Empty)を追加し、穴コレクションへ入れて対象に親付けする。
+def delete_hole_collection(obj):
+    _delete_marker_collection(obj, HOLE_COLL_PREFIX)
 
-    矢印(+Z)が穴を掘る向きになる。既定では下向き(排出穴向き)。
+
+def delete_solid_collection(obj):
+    _delete_marker_collection(obj, SOLID_COLL_PREFIX)
+
+
+def _add_marker(context, obj, coll, name, location, normal):
+    """矢印 Empty マーカーを追加し、コレクションへ入れて対象に親付けする。
+
+    矢印(+Z)がモデル内側=掘る/柱を伸ばす向きになる。
     """
-    coll = get_hole_collection(obj, create=True)
     size = max_dimension(obj) * 0.15
-    empty = bpy.data.objects.new(HOLE_MARKER_PREFIX, None)
+    empty = bpy.data.objects.new(name, None)
     empty.empty_display_type = 'SINGLE_ARROW'
     empty.empty_display_size = size
     coll.objects.link(empty)
@@ -470,7 +608,7 @@ def add_hole_marker(context, obj, location=None, normal=None):
         location = obj.matrix_world.translation.copy()
     empty.matrix_world.translation = location
 
-    # 向き: 法線があればその逆向き(内側=掘る方向)、無ければ下向き。
+    # 向き: 法線があればその逆向き(内側)、無ければ下向き。
     if normal is not None and normal.length > 1e-6:
         _aim_z(empty, -normal.normalized())
     else:
@@ -482,6 +620,21 @@ def add_hole_marker(context, obj, location=None, normal=None):
     return empty
 
 
+def add_hole_marker(context, obj, location=None, normal=None):
+    """穴(排出/エア抜き)マーカーを追加する。"""
+    coll = get_hole_collection(obj, create=True)
+    return _add_marker(context, obj, coll, HOLE_MARKER_PREFIX, location, normal)
+
+
+def add_solid_marker(context, obj, location=None, normal=None):
+    """軸打ち用の中実柱マーカーを追加する。柱は矢印方向へ伸びる。
+
+    柱の差し引きはキャッシュの後段なので、固定中でもライブに反映される。
+    """
+    coll = get_solid_collection(obj, create=True)
+    return _add_marker(context, obj, coll, SOLID_MARKER_PREFIX, location, normal)
+
+
 def _aim_z(obj, direction):
     """オブジェクトの +Z が direction を向くよう回転を設定する。"""
     z = Vector((0.0, 0.0, 1.0))
@@ -490,8 +643,173 @@ def _aim_z(obj, direction):
 
 
 def count_markers(obj):
-    coll = bpy.data.collections.get(_hole_coll_name(obj))
+    coll = bpy.data.collections.get(HOLE_COLL_PREFIX + obj.name)
     return len(coll.objects) if coll else 0
+
+
+def count_solid_markers(obj):
+    coll = bpy.data.collections.get(SOLID_COLL_PREFIX + obj.name)
+    return len(coll.objects) if coll else 0
+
+
+# ---- 中空化キャッシュ(穴調整の軽量化) --------------------------------------
+
+def _cache_name(obj):
+    return CACHE_PREFIX + obj.name
+
+
+def is_frozen(obj):
+    """中空化キャッシュが有効かどうか。"""
+    mod = get_modifier(obj)
+    if mod is None or mod.node_group is None:
+        return False
+    ids = input_identifiers(mod.node_group)
+    ident = ids.get(S_USE_CACHE)
+    if ident is None:
+        return False
+    try:
+        return bool(mod[ident])
+    except Exception:
+        return False
+
+
+def _preview_mod(obj):
+    pv = get_preview(obj)
+    if pv is None:
+        return None
+    pmod = pv.modifiers.get(MODIFIER)
+    if pmod is not None and pmod.type == 'NODES' \
+            and pmod.node_group is not None:
+        return pmod
+    return None
+
+
+def _set_cache_inputs(obj, use, cache):
+    """本体とプレビュー両方のモディファイアへキャッシュ状態を書き込む。"""
+    for m in (get_modifier(obj), _preview_mod(obj)):
+        if m is None or m.node_group is None:
+            continue
+        ids = input_identifiers(m.node_group)
+        try:
+            m[ids[S_USE_CACHE]] = use
+            m[ids[S_CACHE_OBJ]] = cache
+        except Exception:
+            pass
+
+
+def freeze_object(context, obj):
+    """生空洞(柱を引く前)を隠しメッシュへ確定し、以後の軸柱・穴あけは
+    軽いブーリアンだけで再計算する。マーカーのドラッグが軽くなる。"""
+    mod = get_modifier(obj)
+    if mod is None or mod.node_group is None:
+        return False
+    ids = input_identifiers(mod.node_group)
+
+    # キャッシュ取得モードで評価し、柱を引く前の生空洞を取り出す。
+    prev_show = mod.show_viewport
+    mod.show_viewport = True
+    mod[ids[S_CAPTURE]] = True
+    mod[ids[S_USE_CACHE]] = False
+    obj.update_tag()
+    dg = context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(dg)
+    me = bpy.data.meshes.new_from_object(ev, depsgraph=dg)
+    mod[ids[S_CAPTURE]] = False
+    mod.show_viewport = prev_show
+
+    # キャッシュオブジェクト(隠しメッシュ)を作成/更新する。
+    name = _cache_name(obj)
+    cache = bpy.data.objects.get(name)
+    if cache is None:
+        cache = bpy.data.objects.new(name, me)
+        _root_collection().objects.link(cache)
+    else:
+        old = cache.data
+        cache.data = me
+        if old is not None and old.users == 0:
+            bpy.data.meshes.remove(old)
+    me.name = name
+    # 対象に追従させ、モディファイア座標系(RELATIVE)で一致させる。
+    cache.parent = obj
+    cache.matrix_parent_inverse.identity()
+    cache.matrix_basis.identity()
+    cache.hide_viewport = True
+    cache.hide_render = True
+
+    _set_cache_inputs(obj, True, cache)
+    obj.update_tag()
+    return True
+
+
+def unfreeze_object(obj):
+    """中空化キャッシュを解除し、ライブ計算に戻す。"""
+    _set_cache_inputs(obj, False, None)
+    delete_cache(obj)
+    obj.update_tag()
+
+
+def delete_cache(obj):
+    cache = bpy.data.objects.get(_cache_name(obj))
+    if cache is not None:
+        me = cache.data
+        bpy.data.objects.remove(cache, do_unlink=True)
+        if me is not None and me.users == 0:
+            bpy.data.meshes.remove(me)
+
+
+def clear_all_caches():
+    """全オブジェクトのキャッシュを解除する(中空化パラメータ変更時)。"""
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and is_frozen(obj):
+            unfreeze_object(obj)
+
+
+# ---- 空洞プレビュー(軸柱をライブ確認) --------------------------------------
+
+def get_preview(obj):
+    return bpy.data.objects.get(PREVIEW_PREFIX + obj.name)
+
+
+def create_preview(context, obj, st):
+    """空洞(+軸柱)をワイヤフレームで重ね表示するプレビュー物体を作る。
+
+    本体モディファイアのビューポート表示を切り、調整中の再計算を
+    プレビュー(空洞側)だけにする。マーカーを動かすと即座に反映される。
+    """
+    mod = get_modifier(obj)
+    if mod is None:
+        return None
+    remove_preview(obj)   # 作り直し
+
+    name = PREVIEW_PREFIX + obj.name
+    # 本体とメッシュデータを共有する(=ノード入力が元ジオメトリになる)。
+    pv = bpy.data.objects.new(name, obj.data)
+    _root_collection().objects.link(pv)
+    pv.parent = obj
+    pv.matrix_parent_inverse.identity()
+    pv.matrix_basis.identity()
+    pv.display_type = 'WIRE'
+    pv.show_in_front = True
+    pv.hide_render = True
+    pv.hide_select = True
+
+    pmod = pv.modifiers.new(MODIFIER, 'NODES')
+    pmod.node_group = mod.node_group or ensure_node_group()
+    sync_modifier(obj, st)   # 値の書込み+S_PREVIEW/キャッシュ同期+本体表示OFF
+    return pv
+
+
+def remove_preview(obj):
+    """プレビュー物体を削除し、本体モディファイアの表示を戻す。"""
+    pv = get_preview(obj)
+    if pv is not None:
+        me = pv.data
+        bpy.data.objects.remove(pv, do_unlink=True)
+        if me is not None and me.users == 0:
+            bpy.data.meshes.remove(me)
+    mod = get_modifier(obj)
+    if mod is not None:
+        mod.show_viewport = True
 
 
 def has_modifier(context):

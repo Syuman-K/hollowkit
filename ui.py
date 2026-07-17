@@ -49,6 +49,31 @@ class HOLLOWKIT_PT_main(Panel):
         if st.cavity_mode == 'THRESHOLD':
             sub.prop(st, "min_cavity_size")
 
+        # --- 軸打ち(中実柱) ---
+        box = layout.box()
+        box.label(text="軸打ち(中実柱)", icon='EMPTY_AXIS')
+        sub = box.column(align=True)
+        sub.enabled = st.use_hollow
+        sub.prop(st, "solid_diameter")
+        sub.prop(st, "solid_length")
+        row = sub.row(align=True)
+        row.enabled = (obj is not None and obj.type == 'MESH')
+        row.operator("hollowkit.add_solid", icon='EMPTY_SINGLE_ARROW')
+        if obj is not None and obj.type == 'MESH':
+            ns = core.count_solid_markers(obj)
+            sub.label(text="軸マーカー: {} 個".format(ns),
+                      icon='EMPTY_SINGLE_ARROW')
+
+        # 空洞プレビュー(軸柱・穴をワイヤ表示でライブ確認)
+        pv_on = (has_mod and core.get_preview(obj) is not None)
+        row = box.row(align=True)
+        row.enabled = has_mod
+        row.operator("hollowkit.cavity_preview",
+                     text="プレビュー終了" if pv_on else "空洞プレビュー",
+                     icon='HIDE_OFF', depress=pv_on)
+        if pv_on:
+            box.label(text="空洞と柱をワイヤ表示中", icon='INFO')
+
         # --- 穴あけ ---
         box = layout.box()
         box.prop(st, "use_holes")
@@ -68,6 +93,18 @@ class HOLLOWKIT_PT_main(Panel):
                       icon='EMPTY_SINGLE_ARROW')
             if n == 0:
                 sub.label(text="マーカーが無いと穴は開きません", icon='INFO')
+
+        # 中空化キャッシュ(穴調整の軽量化)
+        frozen = has_mod and core.is_frozen(obj)
+        row = box.row(align=True)
+        row.enabled = has_mod
+        row.operator("hollowkit.freeze",
+                     text="固定を解除(再計算)" if frozen
+                     else "調整を軽くする(中空化を固定)",
+                     icon='FREEZE', depress=frozen)
+        if frozen:
+            box.label(text="固定中 — 軸柱・穴あけだけ再計算されます",
+                      icon='INFO')
 
         # --- 確定 / 解除 ---
         box = layout.box()
