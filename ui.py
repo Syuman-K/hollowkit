@@ -83,7 +83,6 @@ class HOLLOWKIT_PT_main(Panel):
         sub.prop(st, "hole_len_mode", expand=True)
         if st.hole_len_mode == 'MANUAL':
             sub.prop(st, "hole_length")
-        sub.prop(st, "use_fast_boolean")
 
         row = sub.row(align=True)
         row.enabled = (obj is not None and obj.type == 'MESH')

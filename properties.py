@@ -135,13 +135,6 @@ class HollowKitSettings(PropertyGroup):
         description="ドリルの長さ。マーカー位置から矢印の方向へこの長さぶん"
                     "掘る。貫通させたい壁まで届く長さにする",
         update=_sync_update)
-    use_fast_boolean: BoolProperty(
-        name="高速ブーリアン(Manifold)", default=True,
-        description="穴あけに高速で水密な Manifold ソルバーを使う。"
-                    "高密度メッシュでも軽く、破れも出にくい。"
-                    "モデルが水密(非多様体なし)でないと結果が消えるので、"
-                    "その場合はオフにして従来の EXACT を使う",
-        update=_sync_update)
 
 
 def register():

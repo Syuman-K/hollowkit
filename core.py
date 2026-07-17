@@ -22,7 +22,7 @@ from mathutils import Vector
 # ---- 定数 -------------------------------------------------------------------
 
 NODE_GROUP = "HollowKit"          # 共有ノードグループ名
-NG_VERSION = 7                    # ノードグループ構造のバージョン(変更時に再生成)
+NG_VERSION = 8                    # ノードグループ構造のバージョン(変更時に再生成)
 MODIFIER = "HollowKit"            # 各オブジェクトに付くモディファイア名
 HOLE_COLL_PREFIX = "HK_穴_"       # オブジェクトごとの穴マーカーコレクション接頭辞
 HOLE_MARKER_PREFIX = "HK_穴マーカー"
@@ -50,7 +50,6 @@ S_USE_CACHE = "キャッシュ使用"
 S_CACHE_OBJ = "キャッシュ"
 S_PREVIEW = "プレビュー出力"     # 内部用: 空洞(+柱)だけを出力(プレビュー物体)
 S_CAPTURE = "キャッシュ取得"     # 内部用: 柱を引く前の生空洞を出力(freeze 用)
-S_FAST_BOOL = "高速ブーリアン"
 
 INPUT_ORDER = (S_GEO, S_HOLLOW, S_WALL, S_VOXEL, S_ADAPT,
                S_ONLY_LARGEST, S_MIN_CAV,
@@ -137,7 +136,6 @@ def _build_node_group():
     _new_input(ng, S_CACHE_OBJ, 'NodeSocketObject')
     _new_input(ng, S_PREVIEW, 'NodeSocketBool', default=False)
     _new_input(ng, S_CAPTURE, 'NodeSocketBool', default=False)
-    _new_input(ng, S_FAST_BOOL, 'NodeSocketBool', default=True)
     _new_input(ng, S_DRILL, 'NodeSocketBool', default=True)
     _new_input(ng, S_HOLE_DIA, 'NodeSocketFloat', default=3.0, min_value=0.0,
                subtype='DISTANCE')
@@ -338,8 +336,9 @@ def _build_node_group():
     L(del_small.outputs["Geometry"], sw_cav.inputs["False"])
     L(cache_info.outputs["Geometry"], sw_cav.inputs["True"])
 
-    # 空洞(GridToMesh 由来)とシリンダーは常に水密なので Manifold ソルバーで
-    # 高速・水密にくり抜ける。
+    # 空洞(GridToMesh 由来)と直方体は常に水密なので Manifold ソルバーで
+    # 高速・水密にくり抜ける。軸マーカーが 0 個ならブーリアン自体を
+    # スキップする(空のカッターでソルバーを走らせない)。
     s_bool = N("GeometryNodeMeshBoolean")
     s_bool.operation = 'DIFFERENCE'
     if hasattr(s_bool, "solver"):
@@ -347,9 +346,22 @@ def _build_node_group():
     L(sw_cav.outputs["Output"], s_bool.inputs["Mesh 1"])
     L(s_real.outputs["Geometry"], s_bool.inputs["Mesh 2"])
 
+    sp_size = N("GeometryNodeAttributeDomainSize")
+    sp_size.component = 'POINTCLOUD'
+    L(s_i2p.outputs["Points"], sp_size.inputs["Geometry"])
+    has_pillars = N("FunctionNodeCompare")
+    has_pillars.data_type = 'INT'
+    has_pillars.operation = 'GREATER_THAN'
+    L(sp_size.outputs["Point Count"], has_pillars.inputs[2])
+    has_pillars.inputs[3].default_value = 0
+    sw_pil = N("GeometryNodeSwitch"); sw_pil.input_type = 'GEOMETRY'
+    L(has_pillars.outputs["Result"], sw_pil.inputs["Switch"])
+    L(sw_cav.outputs["Output"], sw_pil.inputs["False"])
+    L(s_bool.outputs["Mesh"], sw_pil.inputs["True"])
+
     # 面を反転して空洞(内向き法線)にし、元ジオメトリと結合して殻にする。
     flip = N("GeometryNodeFlipFaces")
-    L(s_bool.outputs["Mesh"], flip.inputs["Mesh"])
+    L(sw_pil.outputs["Output"], flip.inputs["Mesh"])
     join = N("GeometryNodeJoinGeometry")
     L(gi(S_GEO), join.inputs[0])
     L(flip.outputs["Mesh"], join.inputs[0])
@@ -401,10 +413,10 @@ def _build_node_group():
     realize = N("GeometryNodeRealizeInstances")
     L(iop.outputs["Instances"], realize.inputs["Geometry"])
 
-    # ドリルは既定で Manifold ソルバー(高速・高密度メッシュでも水密)。
-    # 対象が水密でないと結果が空になるため、EXACT へのフォールバックを
-    # 「高速ブーリアン」スイッチで選べるようにする(Switch は選ばれた側しか
-    # 評価しないので、使わないソルバーのコストは掛からない)。
+    # ドリルはまず Manifold ソルバー(高速・高密度メッシュでも水密)で切り、
+    # 結果が空(=対象が水密でなく Manifold が入力を拒否)なら自動で EXACT に
+    # フォールバックする。Switch は選ばれた側しか評価しないので、成功時に
+    # EXACT のコストは掛からない。
     drill_fast = N("GeometryNodeMeshBoolean")
     drill_fast.operation = 'DIFFERENCE'
     if hasattr(drill_fast, "solver"):
@@ -419,15 +431,36 @@ def _build_node_group():
     L(base, drill_exact.inputs["Mesh 1"])
     L(realize.outputs["Geometry"], drill_exact.inputs["Mesh 2"])
 
-    sw_solver = N("GeometryNodeSwitch"); sw_solver.input_type = 'GEOMETRY'
-    L(gi(S_FAST_BOOL), sw_solver.inputs["Switch"])
-    L(drill_exact.outputs["Mesh"], sw_solver.inputs["False"])
-    L(drill_fast.outputs["Mesh"], sw_solver.inputs["True"])
+    fast_size = N("GeometryNodeAttributeDomainSize")
+    fast_size.component = 'MESH'
+    L(drill_fast.outputs["Mesh"], fast_size.inputs["Geometry"])
+    fast_failed = N("FunctionNodeCompare")
+    fast_failed.data_type = 'INT'
+    fast_failed.operation = 'EQUAL'
+    L(fast_size.outputs["Point Count"], fast_failed.inputs[2])
+    fast_failed.inputs[3].default_value = 0
+    sw_fallback = N("GeometryNodeSwitch"); sw_fallback.input_type = 'GEOMETRY'
+    L(fast_failed.outputs["Result"], sw_fallback.inputs["Switch"])
+    L(drill_fast.outputs["Mesh"], sw_fallback.inputs["False"])
+    L(drill_exact.outputs["Mesh"], sw_fallback.inputs["True"])
+
+    # 穴マーカーが 0 個ならブーリアン自体をスキップする。
+    hp_size = N("GeometryNodeAttributeDomainSize")
+    hp_size.component = 'POINTCLOUD'
+    L(i2p.outputs["Points"], hp_size.inputs["Geometry"])
+    has_holes = N("FunctionNodeCompare")
+    has_holes.data_type = 'INT'
+    has_holes.operation = 'GREATER_THAN'
+    L(hp_size.outputs["Point Count"], has_holes.inputs[2])
+    has_holes.inputs[3].default_value = 0
+    drill_on = N("FunctionNodeBooleanMath"); drill_on.operation = 'AND'
+    L(gi(S_DRILL), drill_on.inputs[0])
+    L(has_holes.outputs["Result"], drill_on.inputs[1])
 
     sw_drill = N("GeometryNodeSwitch"); sw_drill.input_type = 'GEOMETRY'
-    L(gi(S_DRILL), sw_drill.inputs["Switch"])
+    L(drill_on.outputs["Boolean"], sw_drill.inputs["Switch"])
     L(base, sw_drill.inputs["False"])
-    L(sw_solver.outputs["Output"], sw_drill.inputs["True"])
+    L(sw_fallback.outputs["Output"], sw_drill.inputs["True"])
 
     # --- 出力切替(内部用) -----------------------------------------------
     # プレビュー出力: 空洞(+柱)だけを出す(プレビュー物体のワイヤ表示用)。
@@ -435,7 +468,7 @@ def _build_node_group():
     sw_prev = N("GeometryNodeSwitch"); sw_prev.input_type = 'GEOMETRY'
     L(gi(S_PREVIEW), sw_prev.inputs["Switch"])
     L(sw_drill.outputs["Output"], sw_prev.inputs["False"])
-    L(s_bool.outputs["Mesh"], sw_prev.inputs["True"])
+    L(sw_pil.outputs["Output"], sw_prev.inputs["True"])
     sw_cap = N("GeometryNodeSwitch"); sw_cap.input_type = 'GEOMETRY'
     L(gi(S_CAPTURE), sw_cap.inputs["Switch"])
     L(sw_prev.outputs["Output"], sw_cap.inputs["False"])
@@ -489,7 +522,6 @@ def _build_values(st, obj):
         S_HOLE_DIA: st.hole_diameter,
         S_HOLE_LEN: resolve_depth(st, obj),
         S_HOLE_COLL: get_hole_collection(obj, create=False),
-        S_FAST_BOOL: st.use_fast_boolean,
     }
 
 

@@ -300,7 +300,7 @@ bpy.ops.object.modifier_apply(modifier="s")
 print("   dense faces:", len(cube.data.polygons))
 st.scope='SELECTED'; st.use_hollow=True; st.use_holes=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
-st.cavity_mode='LARGEST'; st.use_fast_boolean=True
+st.cavity_mode='LARGEST'
 st.hole_len_mode='MANUAL'; st.hole_length=100.0; st.hole_diameter=3.0
 core.apply_to_objects(bpy.context, st, [cube])
 core.freeze_object(bpy.context, cube)
@@ -314,13 +314,28 @@ print("   Manifold:", {k: r[k] for k in ('v','nonman','shells')},
       "vol={:.0f}".format(r['vol']))
 check(r['nonman']==0, "高密度でも水密(Manifold, 非多様体0)")
 check(r['vol'] < 3930, "穴が実際に開いている")
-st.use_fast_boolean=False
+
+print("\n[14] 非水密メッシュで穴あけONでも消えない(自動フォールバック)")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+cube = bpy.context.active_object
+bm = bmesh.new(); bm.from_mesh(cube.data)
+vs = [bm.verts.new(co) for co in [(-3,-3,0),(3,-3,0),(3,3,0),(-3,3,0)]]
+bm.faces.new(vs)     # 内部に浮いた面 = 非多様体(Manifold ソルバーは拒否する)
+bm.to_mesh(cube.data); bm.free()
+st.use_hollow=True; st.use_holes=True
+st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
+core.apply_to_objects(bpy.context, st, [cube])
+r0 = analyze(cube)   # マーカー0個: ブーリアン自体スキップ
+print("   markers=0:", {'v': r0['v']}, "vol={:.0f}".format(r0['vol']))
+check(r0['v'] > 0, "穴あけON+マーカー0でもメッシュが消えない(スキップ)")
+core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
+                     normal=Vector((0,0,-1)))
 core.sync_modifier(cube, st)
-r2 = analyze(cube)
-print("   EXACT fallback:", {k: r2[k] for k in ('v','nonman')},
-      "vol={:.0f}".format(r2['vol']))
-check(r2['v'] > 0, "EXACT フォールバックでもジオメトリが出る")
-st.use_fast_boolean=True
+r1 = analyze(cube)   # Manifold は空を返す → EXACT へ自動フォールバック
+print("   markers=1:", {'v': r1['v']}, "vol={:.0f}".format(r1['vol']))
+check(r1['v'] > 0, "非水密メッシュでも消えない(EXACT 自動フォールバック)")
+check(r1['vol'] < r0['vol'], "フォールバック経由でも穴は開いている")
 
 print("\n==== RESULT:", "ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}")
 hollowkit.unregister()
