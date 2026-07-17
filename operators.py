@@ -1,4 +1,9 @@
-"""HollowKit のオペレーター(UI とコア処理の橋渡し)。"""
+"""HollowKit のオペレーター(UI とコア処理の橋渡し)。
+
+ワークフローは 2 段階:
+  ① 中空化を適用 → 軸マーカーで中実柱を調整 → 「中空化を確定」で焼き込み
+  ② 穴マーカーを配置(自動で穴あけモディファイアが付く) → 「穴あけを確定」
+"""
 
 import bpy
 from bpy.types import Operator
@@ -16,9 +21,9 @@ def _has_input(context):
 class HOLLOWKIT_OT_apply(Operator):
     bl_idname = "hollowkit.apply"
     bl_label = "中空化を適用 / 更新"
-    bl_description = ("対象メッシュに HollowKit の Geometry Nodes モディファイアを"
-                     "付与(または更新)する。非破壊なので後からパラメータを"
-                     "調整でき、穴マーカーもいつでも追加できる")
+    bl_description = ("対象メッシュに中空化(段階①)の Geometry Nodes "
+                     "モディファイアを付与(または更新)し、計算結果を固定"
+                     "(キャッシュ)する。以後の軸マーカー調整は軽く反映される")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -34,7 +39,6 @@ class HOLLOWKIT_OT_apply(Operator):
         try:
             done = core.apply_to_objects(context, st, objs)
             # 段階分け: ここで中空化を一度だけ計算して固定(キャッシュ)する。
-            # 以後の穴あけ・軸柱の調整は軽いブーリアンだけで再計算される。
             if st.use_hollow:
                 for obj in done:
                     core.freeze_object(context, obj)
@@ -43,8 +47,8 @@ class HOLLOWKIT_OT_apply(Operator):
             return {'CANCELLED'}
         self.report(
             {'INFO'},
-            "HollowKit: {} オブジェクトに適用し中空化を固定しました。"
-            "穴・軸マーカーの調整は軽く反映されます".format(len(done)))
+            "HollowKit: {} オブジェクトに中空化を適用・固定しました。"
+            "軸柱を調整したら「中空化を確定」へ".format(len(done)))
         return {'FINISHED'}
 
 
@@ -104,8 +108,8 @@ class HOLLOWKIT_OT_add_hole(_MarkerPlaceMixin, Operator):
     bl_idname = "hollowkit.add_hole"
     bl_label = "穴マーカーを追加"
     bl_description = ("穴(排出/エア抜き)を掘る位置に矢印マーカーを追加する。"
-                     "ビューでクリックした表面に置かれ、矢印がモデル内側=掘る"
-                     "方向を向く。あとで移動・回転して調整できる")
+                     "ビューでクリックした表面に置かれ、矢印の方向へ掘られる。"
+                     "初回追加時に穴あけ(段階②)のモディファイアが自動で付く")
     bl_options = {'REGISTER', 'UNDO'}
 
     _add_func = staticmethod(core.add_hole_marker)
@@ -128,14 +132,13 @@ class HOLLOWKIT_OT_cavity_preview(Operator):
     bl_idname = "hollowkit.cavity_preview"
     bl_label = "空洞プレビュー"
     bl_description = ("空洞と軸柱の形をワイヤフレームで重ね表示する。"
-                     "軸マーカー・穴マーカーを動かすと即座に反映されるので、"
-                     "結果を見ながら調整できる。もう一度押すと終了。"
-                     "重い場合は先に「中空化を固定」を押す")
+                     "軸マーカーを動かすと即座に反映されるので、"
+                     "結果を見ながら調整できる。もう一度押すと終了")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return core.has_modifier(context)
+        return core.has_hollow_modifier(context)
 
     def execute(self, context):
         obj = context.active_object
@@ -150,7 +153,7 @@ class HOLLOWKIT_OT_cavity_preview(Operator):
             self.report({'ERROR'}, "プレビュー失敗: {}".format(exc))
             return {'CANCELLED'}
         if pv is None:
-            self.report({'WARNING'}, "HollowKit モディファイアがありません")
+            self.report({'WARNING'}, "中空化モディファイアがありません")
             return {'CANCELLED'}
         self.report({'INFO'},
                     "空洞プレビュー中 — マーカーを動かして確認できます")
@@ -159,16 +162,15 @@ class HOLLOWKIT_OT_cavity_preview(Operator):
 
 class HOLLOWKIT_OT_freeze(Operator):
     bl_idname = "hollowkit.freeze"
-    bl_label = "調整を軽くする(中空化を固定)"
-    bl_description = ("重い空洞計算(SDF)の結果をキャッシュに固定し、以後は"
-                     "軸柱・穴あけだけを再計算する。軸マーカー・穴マーカーの"
-                     "移動が軽くなる。壁厚や解像度など中空化の設定を変えると"
-                     "自動で解除される")
+    bl_label = "中空化を固定 / 解除"
+    bl_description = ("重い空洞計算(SDF)の結果をキャッシュに固定し、以後の"
+                     "軸柱調整を軽くする。「中空化を適用」時に自動で固定される"
+                     "ので通常は不要。壁厚など中空化の設定を変えると解除される")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return core.has_modifier(context)
+        return core.has_hollow_modifier(context)
 
     def execute(self, context):
         obj = context.active_object
@@ -182,18 +184,19 @@ class HOLLOWKIT_OT_freeze(Operator):
             self.report({'ERROR'}, "固定失敗: {}".format(exc))
             return {'CANCELLED'}
         if not ok:
-            self.report({'WARNING'}, "HollowKit モディファイアがありません")
+            self.report({'WARNING'}, "中空化モディファイアがありません")
             return {'CANCELLED'}
         self.report({'INFO'},
-                    "中空化を固定しました — 穴マーカーの調整が軽くなります")
+                    "中空化を固定しました — 軸マーカーの調整が軽くなります")
         return {'FINISHED'}
 
 
-class HOLLOWKIT_OT_bake(Operator):
-    bl_idname = "hollowkit.bake"
-    bl_label = "確定(モディファイアを適用)"
-    bl_description = ("Geometry Nodes モディファイアを適用してメッシュを確定する。"
-                     "以後はパラメータ変更できなくなる。エクスポート前に実行")
+class HOLLOWKIT_OT_bake_hollow(Operator):
+    bl_idname = "hollowkit.bake_hollow"
+    bl_label = "中空化を確定"
+    bl_description = ("段階①(中空化+軸柱)をメッシュへ焼き込む。以後は"
+                     "壁厚などを変更できなくなる。確定後に穴マーカーを"
+                     "配置すれば、穴あけ(段階②)は軽く行える")
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -203,30 +206,58 @@ class HOLLOWKIT_OT_bake(Operator):
     def execute(self, context):
         st = context.scene.hollowkit
         objs = [o for o in core.gather_objects(context, st.scope)
-                if core.get_modifier(o) is not None]
+                if core.get_hollow_modifier(o) is not None]
         if not objs:
-            self.report({'WARNING'}, "HollowKit モディファイアを持つ対象がありません")
+            self.report({'WARNING'}, "中空化モディファイアを持つ対象がありません")
             return {'CANCELLED'}
         n = 0
         for obj in objs:
             try:
-                core.remove_preview(obj)
-                if core.bake_object(context, obj):
-                    core.delete_hole_collection(obj)
-                    core.delete_solid_collection(obj)
-                    core.delete_cache(obj)
+                if core.bake_hollow_object(context, obj):
                     n += 1
             except Exception as exc:  # noqa: BLE001
                 self.report({'ERROR'}, "確定失敗 ({}): {}".format(obj.name, exc))
                 return {'CANCELLED'}
-        self.report({'INFO'}, "HollowKit: {} オブジェクトを確定しました".format(n))
+        self.report({'INFO'},
+                    "中空化を確定しました({} オブジェクト)。"
+                    "次は穴マーカーを配置して「穴あけを確定」".format(n))
+        return {'FINISHED'}
+
+
+class HOLLOWKIT_OT_bake_drill(Operator):
+    bl_idname = "hollowkit.bake_drill"
+    bl_label = "穴あけを確定"
+    bl_description = ("段階②(穴あけ)をメッシュへ焼き込み、穴マーカーを"
+                     "片付ける。エクスポート前の最後の仕上げ")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _has_input(context)
+
+    def execute(self, context):
+        st = context.scene.hollowkit
+        objs = [o for o in core.gather_objects(context, st.scope)
+                if core.get_drill_modifier(o) is not None]
+        if not objs:
+            self.report({'WARNING'}, "穴あけモディファイアを持つ対象がありません")
+            return {'CANCELLED'}
+        n = 0
+        for obj in objs:
+            try:
+                if core.bake_drill_object(context, obj):
+                    n += 1
+            except Exception as exc:  # noqa: BLE001
+                self.report({'ERROR'}, "確定失敗 ({}): {}".format(obj.name, exc))
+                return {'CANCELLED'}
+        self.report({'INFO'}, "穴あけを確定しました({} オブジェクト)".format(n))
         return {'FINISHED'}
 
 
 class HOLLOWKIT_OT_clear(Operator):
     bl_idname = "hollowkit.clear"
     bl_label = "解除"
-    bl_description = ("HollowKit のモディファイアと穴マーカーを削除して"
+    bl_description = ("HollowKit のモディファイアとマーカーをすべて削除して"
                      "元の状態に戻す")
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -239,9 +270,10 @@ class HOLLOWKIT_OT_clear(Operator):
         objs = core.gather_objects(context, st.scope)
         n = 0
         for obj in objs:
-            if core.get_modifier(obj) is not None:
-                core.remove_from_object(obj, remove_markers=True)
+            if (core.get_hollow_modifier(obj) is not None
+                    or core.get_drill_modifier(obj) is not None):
                 n += 1
+            core.remove_from_object(obj, remove_markers=True)
         self.report({'INFO'}, "HollowKit: {} オブジェクトを解除しました".format(n))
         return {'FINISHED'}
 
@@ -252,7 +284,8 @@ CLASSES = (
     HOLLOWKIT_OT_add_solid,
     HOLLOWKIT_OT_cavity_preview,
     HOLLOWKIT_OT_freeze,
-    HOLLOWKIT_OT_bake,
+    HOLLOWKIT_OT_bake_hollow,
+    HOLLOWKIT_OT_bake_drill,
     HOLLOWKIT_OT_clear,
 )
 

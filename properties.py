@@ -110,12 +110,7 @@ class HollowKitSettings(PropertyGroup):
                     "中身を残す。軸の差し込み深さより長くする",
         update=_sync_update)
 
-    # --- 穴あけ ---
-    use_holes: BoolProperty(
-        name="穴あけする", default=True,
-        description="穴マーカー(矢印)を置いた位置・向きに穴を掘り、"
-                    "中空部を外へ通じさせる(レジン排出・エア抜き)",
-        update=_sync_update)
+    # --- 穴あけ (段階②: 独立モディファイア) ---
     hole_diameter: FloatProperty(
         name="穴の幅",
         default=3.0, min=0.0, soft_max=20.0, precision=3, unit='LENGTH',

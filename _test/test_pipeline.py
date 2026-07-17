@@ -52,18 +52,23 @@ def analyze(obj):
 core = hollowkit.core
 st = bpy.context.scene.hollowkit
 
-print("\n[1] ノードグループ生成")
-ng = core.ensure_node_group()
-check(ng is not None and ng.bl_idname=='GeometryNodeTree', "HollowKit ノードグループ生成")
-ids = core.input_identifiers(ng)
-check(all(k in ids for k in (core.S_WALL, core.S_VOXEL, core.S_HOLE_COLL)),
-      "入力 identifier マッピング取得")
+print("\n[1] ノードグループ生成(2段階)")
+ngh = core.ensure_hollow_group()
+ngd = core.ensure_drill_group()
+check(ngh is not None and ngh.bl_idname=='GeometryNodeTree', "中空化グループ生成")
+check(ngd is not None and ngd.bl_idname=='GeometryNodeTree', "穴あけグループ生成")
+hids = core.input_identifiers(ngh)
+dids = core.input_identifiers(ngd)
+check(all(k in hids for k in (core.S_WALL, core.S_VOXEL, core.S_SOLID_COLL)),
+      "中空化グループの入力 identifier 取得")
+check(all(k in dids for k in (core.S_HOLE_DIA, core.S_HOLE_COLL)),
+      "穴あけグループの入力 identifier 取得")
 
 print("\n[2] 中空化のみ(20mm 立方体, 壁厚2mm)")
 clean()
 bpy.ops.mesh.primitive_cube_add(size=20)
 cube = bpy.context.active_object
-st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.scope='SELECTED'; st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 core.apply_to_objects(bpy.context, st, [cube])
 r = analyze(cube)
@@ -86,7 +91,7 @@ print("\n[3] 中空化 + 穴あけ(マーカー2個)")
 clean()
 bpy.ops.mesh.primitive_cube_add(size=20)
 cube = bpy.context.active_object
-st.use_holes=True; st.hole_diameter=3.0
+st.hole_diameter=3.0
 st.hole_len_mode='MANUAL'; st.hole_length=100.0
 core.apply_to_objects(bpy.context, st, [cube])
 core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
@@ -113,24 +118,32 @@ clean()
 bpy.ops.mesh.primitive_uv_sphere_add(radius=15)
 sph = bpy.context.active_object
 st.wall_thickness=2.0; st.voxel_mode='AUTO'; st.detail=96
-st.hole_len_mode='AUTO'; st.use_holes=False
+st.hole_len_mode='AUTO'
 res = bpy.ops.hollowkit.apply()
 check('FINISHED' in res, "apply オペレーター成功")
-check(core.get_modifier(sph) is not None, "球にモディファイア付与")
+check(core.get_hollow_modifier(sph) is not None, "球にモディファイア付与")
 check(core.is_frozen(sph), "適用で自動的に固定(段階分け)される")
 r = analyze(sph)
 print("   ", r)
 check(r['nonman']==0 and r['shells']==2, "球の中空化も水密2シェル")
 
-print("\n[6] 確定(bake)")
+print("\n[6] 二段階の確定(中空化→穴あけ)")
+core.bake_hollow_object(bpy.context, sph)
+check(core.get_hollow_modifier(sph) is None, "①確定で中空化モディファイアが消える")
+check(len(sph.data.vertices) > 100, "①確定後の実メッシュに頂点がある")
+shell_vol_bm = bmesh.new(); shell_vol_bm.from_mesh(sph.data)
+shell_vol = shell_vol_bm.calc_volume(); shell_vol_bm.free()
 core.add_hole_marker(bpy.context, sph, location=Vector((0,0,-15)),
                      normal=Vector((0,0,-1)))
-st.use_holes=True
-core.sync_modifier(sph, st)
-core.bake_object(bpy.context, sph)
-check(core.get_modifier(sph) is None, "bake後モディファイアが無い(適用済み)")
-# baked mesh should be real
-check(len(sph.data.vertices) > 100, "bake後の実メッシュに頂点がある")
+check(core.get_drill_modifier(sph) is not None,
+      "穴マーカー追加で穴あけモディファイアが自動付与")
+core.bake_drill_object(bpy.context, sph)
+check(core.get_drill_modifier(sph) is None, "②確定で穴あけモディファイアが消える")
+check(core.count_markers(sph)==0, "②確定で穴マーカーが片付く")
+holed_bm = bmesh.new(); holed_bm.from_mesh(sph.data)
+holed_vol = holed_bm.calc_volume(); holed_bm.free()
+print("   shell={:.1f} → holed={:.1f}".format(shell_vol, holed_vol))
+check(holed_vol < shell_vol, "②確定で実際に穴が開いている")
 
 print("\n[7] 解除(clear)")
 clean()
@@ -139,7 +152,7 @@ c2 = bpy.context.active_object
 core.apply_to_objects(bpy.context, st, [c2])
 core.add_hole_marker(bpy.context, c2, location=Vector((0,0,-10)))
 core.remove_from_object(c2, remove_markers=True)
-check(core.get_modifier(c2) is None, "解除でモディファイア削除")
+check(core.get_hollow_modifier(c2) is None, "解除でモディファイア削除")
 check(core.count_markers(c2)==0, "解除でマーカー削除")
 
 print("\n[8] 小空洞(レジン溜まり)の自動削除")
@@ -154,7 +167,7 @@ bpy.context.view_layer.objects.active = big
 bpy.ops.object.join()
 obj = bpy.context.active_object
 
-st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.scope='SELECTED'; st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 
 st.cavity_mode='LARGEST'   # 既定: 最大の空洞のみ残す
@@ -184,7 +197,7 @@ print("\n[9] 軸打ち用の中実柱(軸マーカー)")
 clean()
 bpy.ops.mesh.primitive_cube_add(size=20)
 cube = bpy.context.active_object
-st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.scope='SELECTED'; st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 st.cavity_mode='LARGEST'
 st.solid_diameter=8.0; st.solid_length=15.0
@@ -204,7 +217,7 @@ check(r['nonman']==0, "柱入りでも水密")
 check(r['shells']==2, "柱は空洞壁と一体(2シェルのまま)")
 
 print("\n[10] 中空化キャッシュ(固定)")
-st.use_holes=True; st.hole_diameter=3.0
+st.hole_diameter=3.0
 st.hole_len_mode='MANUAL'; st.hole_length=100.0
 core.sync_modifier(cube, st)
 core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
@@ -238,7 +251,7 @@ st.wall_thickness = 2.0
 print("\n[11] 空洞プレビュー")
 pv = core.create_preview(bpy.context, cube, st)
 check(pv is not None, "プレビュー物体が作成される")
-check(core.get_modifier(cube).show_viewport == False,
+check(core.get_hollow_modifier(cube).show_viewport == False,
       "プレビュー中は本体モディファイア表示OFF")
 dg = bpy.context.evaluated_depsgraph_get()
 pme = pv.evaluated_get(dg).to_mesh()
@@ -248,14 +261,14 @@ print("   preview verts:", pv_verts)
 check(pv_verts > 100, "プレビューに空洞ジオメトリがある")
 core.remove_preview(cube)
 check(core.get_preview(cube) is None, "プレビュー終了で物体が消える")
-check(core.get_modifier(cube).show_viewport == True,
+check(core.get_hollow_modifier(cube).show_viewport == True,
       "終了で本体モディファイア表示が戻る")
 
 print("\n[12] マーカーの矢印方向と柱/穴の方向一致(回転伝搬)")
 clean()
 bpy.ops.mesh.primitive_cube_add(size=20)
 cube = bpy.context.active_object
-st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.scope='SELECTED'; st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 st.cavity_mode='LARGEST'; st.solid_diameter=8.0; st.solid_length=15.0
 core.apply_to_objects(bpy.context, st, [cube])
@@ -277,7 +290,7 @@ core.delete_solid_collection(cube)
 core.sync_modifier(cube, st)
 
 # 穴: +X 面中央のマーカー。内向き(-X)なら両壁貫通、外向き(+X)なら片壁のみ
-st.use_holes=True; st.hole_diameter=3.0
+st.hole_diameter=3.0
 st.hole_len_mode='MANUAL'; st.hole_length=100.0
 hm = core.add_hole_marker(bpy.context, cube, location=Vector((10,0,0)),
                           normal=Vector((1,0,0)))   # 矢印 -X 内向き
@@ -298,7 +311,7 @@ sm = cube.modifiers.new("s", "SUBSURF")
 sm.levels = 6; sm.subdivision_type = 'SIMPLE'
 bpy.ops.object.modifier_apply(modifier="s")
 print("   dense faces:", len(cube.data.polygons))
-st.scope='SELECTED'; st.use_hollow=True; st.use_holes=True
+st.scope='SELECTED'; st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 st.cavity_mode='LARGEST'
 st.hole_len_mode='MANUAL'; st.hole_length=100.0; st.hole_diameter=3.0
@@ -323,7 +336,7 @@ bm = bmesh.new(); bm.from_mesh(cube.data)
 vs = [bm.verts.new(co) for co in [(-3,-3,0),(3,-3,0),(3,3,0),(-3,3,0)]]
 bm.faces.new(vs)     # 内部に浮いた面 = 非多様体(Manifold ソルバーは拒否する)
 bm.to_mesh(cube.data); bm.free()
-st.use_hollow=True; st.use_holes=True
+st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 core.apply_to_objects(bpy.context, st, [cube])
 r0 = analyze(cube)   # マーカー0個: ブーリアン自体スキップ
@@ -341,7 +354,7 @@ print("\n[15] 自動の穴長は空洞まで(反対側の壁を貫通しない)"
 clean()
 bpy.ops.mesh.primitive_cube_add(size=20)
 cube = bpy.context.active_object
-st.use_hollow=True; st.use_holes=True
+st.use_hollow=True
 st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
 st.hole_diameter=3.0; st.hole_len_mode='AUTO'
 core.apply_to_objects(bpy.context, st, [cube])
