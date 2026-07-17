@@ -33,14 +33,18 @@ class HOLLOWKIT_OT_apply(Operator):
             return {'CANCELLED'}
         try:
             done = core.apply_to_objects(context, st, objs)
+            # 段階分け: ここで中空化を一度だけ計算して固定(キャッシュ)する。
+            # 以後の穴あけ・軸柱の調整は軽いブーリアンだけで再計算される。
+            if st.use_hollow:
+                for obj in done:
+                    core.freeze_object(context, obj)
         except Exception as exc:  # noqa: BLE001 - surface any failure to the user
             self.report({'ERROR'}, "HollowKit 失敗: {}".format(exc))
             return {'CANCELLED'}
         self.report(
             {'INFO'},
-            "HollowKit: {} オブジェクトに適用。壁厚 {:.3g}、"
-            "穴マーカーを追加して穴を掘れます".format(
-                len(done), st.wall_thickness))
+            "HollowKit: {} オブジェクトに適用し中空化を固定しました。"
+            "穴・軸マーカーの調整は軽く反映されます".format(len(done)))
         return {'FINISHED'}
 
 

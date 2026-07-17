@@ -22,7 +22,7 @@ from mathutils import Vector
 # ---- 定数 -------------------------------------------------------------------
 
 NODE_GROUP = "HollowKit"          # 共有ノードグループ名
-NG_VERSION = 5                    # ノードグループ構造のバージョン(変更時に再生成)
+NG_VERSION = 6                    # ノードグループ構造のバージョン(変更時に再生成)
 MODIFIER = "HollowKit"            # 各オブジェクトに付くモディファイア名
 HOLE_COLL_PREFIX = "HK_穴_"       # オブジェクトごとの穴マーカーコレクション接頭辞
 HOLE_MARKER_PREFIX = "HK_穴マーカー"
@@ -50,6 +50,7 @@ S_USE_CACHE = "キャッシュ使用"
 S_CACHE_OBJ = "キャッシュ"
 S_PREVIEW = "プレビュー出力"     # 内部用: 空洞(+柱)だけを出力(プレビュー物体)
 S_CAPTURE = "キャッシュ取得"     # 内部用: 柱を引く前の生空洞を出力(freeze 用)
+S_FAST_BOOL = "高速ブーリアン"
 
 INPUT_ORDER = (S_GEO, S_HOLLOW, S_WALL, S_VOXEL, S_ADAPT,
                S_ONLY_LARGEST, S_MIN_CAV,
@@ -136,6 +137,7 @@ def _build_node_group():
     _new_input(ng, S_CACHE_OBJ, 'NodeSocketObject')
     _new_input(ng, S_PREVIEW, 'NodeSocketBool', default=False)
     _new_input(ng, S_CAPTURE, 'NodeSocketBool', default=False)
+    _new_input(ng, S_FAST_BOOL, 'NodeSocketBool', default=True)
     _new_input(ng, S_DRILL, 'NodeSocketBool', default=True)
     _new_input(ng, S_HOLE_DIA, 'NodeSocketFloat', default=3.0, min_value=0.0,
                subtype='DISTANCE')
@@ -336,10 +338,12 @@ def _build_node_group():
     L(del_small.outputs["Geometry"], sw_cav.inputs["False"])
     L(cache_info.outputs["Geometry"], sw_cav.inputs["True"])
 
+    # 空洞(GridToMesh 由来)とシリンダーは常に水密なので Manifold ソルバーで
+    # 高速・水密にくり抜ける。
     s_bool = N("GeometryNodeMeshBoolean")
     s_bool.operation = 'DIFFERENCE'
-    if "Self Intersection" in s_bool.inputs:
-        s_bool.inputs["Self Intersection"].default_value = True
+    if hasattr(s_bool, "solver"):
+        s_bool.solver = 'MANIFOLD'
     L(sw_cav.outputs["Output"], s_bool.inputs["Mesh 1"])
     L(s_real.outputs["Geometry"], s_bool.inputs["Mesh 2"])
 
@@ -396,17 +400,33 @@ def _build_node_group():
     realize = N("GeometryNodeRealizeInstances")
     L(iop.outputs["Instances"], realize.inputs["Geometry"])
 
-    drill = N("GeometryNodeMeshBoolean")
-    drill.operation = 'DIFFERENCE'
-    if "Self Intersection" in drill.inputs:
-        drill.inputs["Self Intersection"].default_value = True
-    L(base, drill.inputs["Mesh 1"])
-    L(realize.outputs["Geometry"], drill.inputs["Mesh 2"])
+    # ドリルは既定で Manifold ソルバー(高速・高密度メッシュでも水密)。
+    # 対象が水密でないと結果が空になるため、EXACT へのフォールバックを
+    # 「高速ブーリアン」スイッチで選べるようにする(Switch は選ばれた側しか
+    # 評価しないので、使わないソルバーのコストは掛からない)。
+    drill_fast = N("GeometryNodeMeshBoolean")
+    drill_fast.operation = 'DIFFERENCE'
+    if hasattr(drill_fast, "solver"):
+        drill_fast.solver = 'MANIFOLD'
+    L(base, drill_fast.inputs["Mesh 1"])
+    L(realize.outputs["Geometry"], drill_fast.inputs["Mesh 2"])
+
+    drill_exact = N("GeometryNodeMeshBoolean")
+    drill_exact.operation = 'DIFFERENCE'
+    if "Self Intersection" in drill_exact.inputs:
+        drill_exact.inputs["Self Intersection"].default_value = True
+    L(base, drill_exact.inputs["Mesh 1"])
+    L(realize.outputs["Geometry"], drill_exact.inputs["Mesh 2"])
+
+    sw_solver = N("GeometryNodeSwitch"); sw_solver.input_type = 'GEOMETRY'
+    L(gi(S_FAST_BOOL), sw_solver.inputs["Switch"])
+    L(drill_exact.outputs["Mesh"], sw_solver.inputs["False"])
+    L(drill_fast.outputs["Mesh"], sw_solver.inputs["True"])
 
     sw_drill = N("GeometryNodeSwitch"); sw_drill.input_type = 'GEOMETRY'
     L(gi(S_DRILL), sw_drill.inputs["Switch"])
     L(base, sw_drill.inputs["False"])
-    L(drill.outputs["Mesh"], sw_drill.inputs["True"])
+    L(sw_solver.outputs["Output"], sw_drill.inputs["True"])
 
     # --- 出力切替(内部用) -----------------------------------------------
     # プレビュー出力: 空洞(+柱)だけを出す(プレビュー物体のワイヤ表示用)。
@@ -468,6 +488,7 @@ def _build_values(st, obj):
         S_HOLE_DIA: st.hole_diameter,
         S_HOLE_LEN: resolve_depth(st, obj),
         S_HOLE_COLL: get_hole_collection(obj, create=False),
+        S_FAST_BOOL: st.use_fast_boolean,
     }
 
 

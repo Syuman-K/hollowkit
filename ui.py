@@ -83,6 +83,7 @@ class HOLLOWKIT_PT_main(Panel):
         sub.prop(st, "hole_len_mode", expand=True)
         if st.hole_len_mode == 'MANUAL':
             sub.prop(st, "hole_length")
+        sub.prop(st, "use_fast_boolean")
 
         row = sub.row(align=True)
         row.enabled = (obj is not None and obj.type == 'MESH')
@@ -105,6 +106,9 @@ class HOLLOWKIT_PT_main(Panel):
         if frozen:
             box.label(text="固定中 — 軸柱・穴あけだけ再計算されます",
                       icon='INFO')
+        elif has_mod and st.use_hollow:
+            box.label(text="未固定 — 調整が重い場合は『中空化を更新』",
+                      icon='ERROR')
 
         # --- 確定 / 解除 ---
         box = layout.box()
