@@ -28,7 +28,7 @@ NODE_GROUP_DRILL = "HollowKit穴あけ"
 MOD_HOLLOW = "HollowKit 中空化"
 MOD_DRILL = "HollowKit 穴あけ"
 LEGACY_MODIFIER = "HollowKit"     # v0.8 以前の一体型モディファイア名
-NG_VERSION = 9                    # ノードグループ構造のバージョン(変更時に再生成)
+NG_VERSION = 10                   # ノードグループ構造のバージョン(変更時に再生成)
 
 HOLE_COLL_PREFIX = "HK_穴_"       # オブジェクトごとの穴マーカーコレクション接頭辞
 HOLE_MARKER_PREFIX = "HK_穴マーカー"
@@ -156,17 +156,17 @@ def _build_hollow_group():
     _new_input(ng, S_HOLLOW, 'NodeSocketBool', default=True)
     _new_input(ng, S_WALL, 'NodeSocketFloat', default=2.0, min_value=0.0,
                subtype='DISTANCE')
-    _new_input(ng, S_VOXEL, 'NodeSocketFloat', default=0.5, min_value=1e-5,
+    _new_input(ng, S_VOXEL, 'NodeSocketFloat', default=0.3, min_value=1e-5,
                subtype='DISTANCE')
     _new_input(ng, S_ADAPT, 'NodeSocketFloat', default=0.0, min_value=0.0,
                max_value=1.0)
     _new_input(ng, S_ONLY_LARGEST, 'NodeSocketBool', default=True)
-    _new_input(ng, S_MIN_CAV, 'NodeSocketFloat', default=5.0, min_value=0.0,
+    _new_input(ng, S_MIN_CAV, 'NodeSocketFloat', default=3.0, min_value=0.0,
                subtype='DISTANCE')
     _new_input(ng, S_SOLID_COLL, 'NodeSocketCollection')
-    _new_input(ng, S_SOLID_DIA, 'NodeSocketFloat', default=10.0, min_value=0.0,
+    _new_input(ng, S_SOLID_DIA, 'NodeSocketFloat', default=5.0, min_value=0.0,
                subtype='DISTANCE')
-    _new_input(ng, S_SOLID_LEN, 'NodeSocketFloat', default=20.0, min_value=0.0,
+    _new_input(ng, S_SOLID_LEN, 'NodeSocketFloat', default=10.0, min_value=0.0,
                subtype='DISTANCE')
     _new_input(ng, S_USE_CACHE, 'NodeSocketBool', default=False)
     _new_input(ng, S_CACHE_OBJ, 'NodeSocketObject')
@@ -408,9 +408,9 @@ def _build_drill_group():
     ng = bpy.data.node_groups.new(NODE_GROUP_DRILL, "GeometryNodeTree")
 
     _new_input(ng, S_GEO, 'NodeSocketGeometry')
-    _new_input(ng, S_HOLE_DIA, 'NodeSocketFloat', default=3.0, min_value=0.0,
+    _new_input(ng, S_HOLE_DIA, 'NodeSocketFloat', default=2.5, min_value=0.0,
                subtype='DISTANCE')
-    _new_input(ng, S_HOLE_LEN, 'NodeSocketFloat', default=100.0, min_value=0.0,
+    _new_input(ng, S_HOLE_LEN, 'NodeSocketFloat', default=30.0, min_value=0.0,
                subtype='DISTANCE')
     _new_input(ng, S_HOLE_COLL, 'NodeSocketCollection')
     ng.interface.new_socket(S_GEO, in_out='OUTPUT',

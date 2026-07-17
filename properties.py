@@ -43,8 +43,8 @@ class HollowKitSettings(PropertyGroup):
         update=_hollow_update)
     wall_thickness: FloatProperty(
         name="壁厚",
-        default=2.0, min=0.0, soft_max=20.0, precision=3, unit='LENGTH',
-        description="シェルの厚み。光造形では 1.5〜3mm 程度が目安。"
+        default=2.0, min=0.0, soft_max=10.0, precision=3, unit='LENGTH',
+        description="シェルの厚み。1/7 フィギュアの光造形では 1.5〜2.5mm 目安。"
                     "薄すぎると割れ、厚すぎると意味が無い",
         update=_hollow_update)
 
@@ -65,7 +65,7 @@ class HollowKitSettings(PropertyGroup):
         update=_hollow_update)
     voxel_size: FloatProperty(
         name="ボクセルサイズ",
-        default=0.5, min=1e-5, soft_max=5.0, precision=4, unit='LENGTH',
+        default=0.3, min=1e-5, soft_max=2.0, precision=4, unit='LENGTH',
         description="内側の空洞面の解像度。小さいほど細かいが重い。"
                     "壁厚より十分小さくすること。外側の元メッシュには影響しない",
         update=_hollow_update)
@@ -91,7 +91,7 @@ class HollowKitSettings(PropertyGroup):
         update=_hollow_update)
     min_cavity_size: FloatProperty(
         name="最小空洞径",
-        default=5.0, min=0.0, soft_max=50.0, precision=2, unit='LENGTH',
+        default=3.0, min=0.0, soft_max=20.0, precision=2, unit='LENGTH',
         description="この直径の球より体積が小さい閉じた空洞は、レジン溜まりに"
                     "なるため作らず中実のまま残す(サイズ指定モード)",
         update=_hollow_update)
@@ -99,22 +99,25 @@ class HollowKitSettings(PropertyGroup):
     # --- 軸打ち用の中実柱 (キャッシュ後段なので固定中もライブ反映) ---
     solid_diameter: FloatProperty(
         name="軸柱の幅",
-        default=10.0, min=0.0, soft_max=50.0, precision=2, unit='LENGTH',
-        description="軸マーカー位置に残す中実の四角柱の幅(一辺)。使う軸"
-                    "(真鍮線など)の径より十分太くする(3mm 軸なら 8〜12mm 目安)",
+        default=5.0, min=0.0, soft_max=20.0, precision=2, unit='LENGTH',
+        description="軸マーカー位置に残す中実の四角柱の幅(一辺)。使う軸の"
+                    "径より十分太くする(1/7 フィギュアの 1.5〜2mm 真鍮線なら"
+                    " 4〜6mm 目安)",
         update=_sync_update)
     solid_length: FloatProperty(
         name="軸柱の長さ",
-        default=20.0, min=0.0, soft_max=200.0, precision=2, unit='LENGTH',
+        default=10.0, min=0.0, soft_max=50.0, precision=2, unit='LENGTH',
         description="中実柱の長さ。マーカー位置から矢印方向へこの長さぶん"
-                    "中身を残す。軸の差し込み深さより長くする",
+                    "中身を残す。軸の差し込み深さより長くする"
+                    "(1/7 フィギュアなら 8〜12mm 目安)",
         update=_sync_update)
 
     # --- 穴あけ (段階②: 独立モディファイア) ---
     hole_diameter: FloatProperty(
         name="穴の幅",
-        default=3.0, min=0.0, soft_max=20.0, precision=3, unit='LENGTH',
-        description="排出/エア抜きの四角穴の幅(一辺)。光造形では 2〜4mm が目安",
+        default=2.5, min=0.0, soft_max=8.0, precision=3, unit='LENGTH',
+        description="排出/エア抜きの四角穴の幅(一辺)。1/7 フィギュアの"
+                    "光造形では 2〜3mm 目安",
         update=_sync_update)
     hole_len_mode: EnumProperty(
         name="穴の長さ",
@@ -129,7 +132,7 @@ class HollowKitSettings(PropertyGroup):
         update=_sync_update)
     hole_length: FloatProperty(
         name="長さ",
-        default=100.0, min=0.0, soft_max=1000.0, precision=3, unit='LENGTH',
+        default=30.0, min=0.0, soft_max=100.0, precision=3, unit='LENGTH',
         description="ドリルの長さ。マーカー位置から矢印の方向へこの長さぶん"
                     "掘る。貫通させたい壁まで届く長さにする",
         update=_sync_update)
