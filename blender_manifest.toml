@@ -1,0 +1,28 @@
+schema_version = "1.0.0"
+
+id = "hollowkit"
+version = "0.2.0"
+name = "HollowKit"
+tagline = "Hollow meshes and drill drain holes for resin printing"
+maintainer = "GarageKit <zhuwanchuanyuan@gmail.com>"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Mesh", "Geometry Nodes"]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".git/",
+  ".github/",
+  "*.zip",
+  "*.blend",
+  "*.blend1",
+  ".gitignore",
+  "dist/",
+  "example/",
+  "_test/",
+  "README.md",
+]

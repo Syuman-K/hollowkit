@@ -1,0 +1,183 @@
+"""HollowKit headless test.
+
+Run:
+  & "C:\\Program Files\\Blender Foundation\\Blender 5.0\\blender.exe" \
+      -b --factory-startup --python _test/test_pipeline.py
+"""
+import sys, os
+import bpy, bmesh
+from mathutils import Vector
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))  # dev/ so `import hollowkit`
+
+import hollowkit
+hollowkit.register()
+
+FAIL = []
+def check(cond, msg):
+    print(("  OK  " if cond else "  FAIL") + " " + msg)
+    if not cond:
+        FAIL.append(msg)
+
+def clean():
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o, do_unlink=True)
+
+def analyze(obj):
+    dg = bpy.context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(dg)
+    me = ev.to_mesh()
+    bm = bmesh.new(); bm.from_mesh(me)
+    nonman = sum(1 for e in bm.edges if not e.is_manifold)
+    bm.verts.ensure_lookup_table()
+    seen=set(); shells=0
+    for v in bm.verts:
+        if v in seen: continue
+        shells+=1; stack=[v]
+        while stack:
+            w=stack.pop()
+            if w in seen: continue
+            seen.add(w)
+            for e in w.link_edges: stack.append(e.other_vert(w))
+    vol = bm.calc_volume()
+    bb=[Vector(c) for c in ev.bound_box]
+    dim = Vector((max(p.x for p in bb)-min(p.x for p in bb),
+                  max(p.y for p in bb)-min(p.y for p in bb),
+                  max(p.z for p in bb)-min(p.z for p in bb)))
+    nv=len(bm.verts); nf=len(bm.faces)
+    bm.free(); ev.to_mesh_clear()
+    return dict(v=nv,f=nf,nonman=nonman,shells=shells,vol=vol,dim=dim)
+
+core = hollowkit.core
+st = bpy.context.scene.hollowkit
+
+print("\n[1] ノードグループ生成")
+ng = core.ensure_node_group()
+check(ng is not None and ng.bl_idname=='GeometryNodeTree', "HollowKit ノードグループ生成")
+ids = core.input_identifiers(ng)
+check(all(k in ids for k in (core.S_WALL, core.S_VOXEL, core.S_HOLE_COLL)),
+      "入力 identifier マッピング取得")
+
+print("\n[2] 中空化のみ(20mm 立方体, 壁厚2mm)")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+cube = bpy.context.active_object
+st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
+core.apply_to_objects(bpy.context, st, [cube])
+r = analyze(cube)
+print("   ", r)
+check(r['nonman']==0, "中空シェルが水密(非多様体0)")
+check(r['shells']==2, "外殻+内空洞=2シェル")
+check(abs(r['dim'].x-20)<1e-6, "外形が厳密に維持されている(=20mm)")
+check(3500 < r['vol'] < 4300, "シェル体積が概ね壁厚2mm相当(~3904mm^3)")
+
+# 外側ディテール完全保持: 元の8コーナー頂点が座標そのまま存在すること
+dg = bpy.context.evaluated_depsgraph_get()
+ev = cube.evaluated_get(dg); me = ev.to_mesh()
+coords = {tuple(round(c, 5) for c in v.co) for v in me.vertices}
+corners = {(x, y, z) for x in (-10.0, 10.0) for y in (-10.0, 10.0)
+           for z in (-10.0, 10.0)}
+check(corners <= coords, "元の外側頂点が無変更で残っている(ディテール保持)")
+ev.to_mesh_clear()
+
+print("\n[3] 中空化 + 穴あけ(マーカー2個)")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+cube = bpy.context.active_object
+st.use_holes=True; st.hole_diameter=3.0
+st.hole_len_mode='MANUAL'; st.hole_length=100.0
+core.apply_to_objects(bpy.context, st, [cube])
+core.add_hole_marker(bpy.context, cube, location=Vector((6,5,-10)),
+                     normal=Vector((0,0,-1)))
+core.add_hole_marker(bpy.context, cube, location=Vector((10,-5,4)),
+                     normal=Vector((1,0,0)))
+core.sync_modifier(cube, st)
+check(core.count_markers(cube)==2, "穴マーカーが2個")
+r = analyze(cube)
+print("   ", r)
+check(r['nonman']==0, "中空+穴あけ後も水密(非多様体0)")
+check(r['vol'] < 3900, "穴のぶん体積が減少")
+
+print("\n[4] ライブ同期(壁厚を厚くすると体積増)")
+before = analyze(cube)['vol']
+st.wall_thickness=4.0
+core.sync_modifier(cube, st)
+after = analyze(cube)['vol']
+print("   壁厚2mm体積={:.1f} → 4mm体積={:.1f}".format(before, after))
+check(after > before, "壁厚を増やすとシェル体積が増える(同期OK)")
+
+print("\n[5] スコープ/自動解像度 + apply operator")
+clean()
+bpy.ops.mesh.primitive_uv_sphere_add(radius=15)
+sph = bpy.context.active_object
+st.wall_thickness=2.0; st.voxel_mode='AUTO'; st.detail=96
+st.hole_len_mode='AUTO'; st.use_holes=False
+res = bpy.ops.hollowkit.apply()
+check('FINISHED' in res, "apply オペレーター成功")
+check(core.get_modifier(sph) is not None, "球にモディファイア付与")
+r = analyze(sph)
+print("   ", r)
+check(r['nonman']==0 and r['shells']==2, "球の中空化も水密2シェル")
+
+print("\n[6] 確定(bake)")
+core.add_hole_marker(bpy.context, sph, location=Vector((0,0,-15)),
+                     normal=Vector((0,0,-1)))
+st.use_holes=True
+core.sync_modifier(sph, st)
+core.bake_object(bpy.context, sph)
+check(core.get_modifier(sph) is None, "bake後モディファイアが無い(適用済み)")
+# baked mesh should be real
+check(len(sph.data.vertices) > 100, "bake後の実メッシュに頂点がある")
+
+print("\n[7] 解除(clear)")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+c2 = bpy.context.active_object
+core.apply_to_objects(bpy.context, st, [c2])
+core.add_hole_marker(bpy.context, c2, location=Vector((0,0,-10)))
+core.remove_from_object(c2, remove_markers=True)
+check(core.get_modifier(c2) is None, "解除でモディファイア削除")
+check(core.count_markers(c2)==0, "解除でマーカー削除")
+
+print("\n[8] 小空洞(レジン溜まり)の自動削除")
+clean()
+bpy.ops.mesh.primitive_cube_add(size=20)
+big = bpy.context.active_object
+bpy.ops.mesh.primitive_cube_add(size=8, location=(40, 0, 0))
+small = bpy.context.active_object
+bpy.ops.object.select_all(action='DESELECT')
+big.select_set(True); small.select_set(True)
+bpy.context.view_layer.objects.active = big
+bpy.ops.object.join()
+obj = bpy.context.active_object
+
+st.scope='SELECTED'; st.use_hollow=True; st.use_holes=False
+st.wall_thickness=2.0; st.voxel_mode='MANUAL'; st.voxel_size=0.5
+
+st.cavity_mode='LARGEST'   # 既定: 最大の空洞のみ残す
+core.apply_to_objects(bpy.context, st, [obj])
+r = analyze(obj)
+print("   LARGEST:", r)
+# 20mm側の空洞(≈4096mm³)だけが残り、8mm側の空洞(≈64mm³)は削除される
+check(r['shells']==3, "最大のみ: 外殻2+空洞1=3シェル")
+check(4200 < r['vol'] < 4700, "体積が『大空洞のみ』相当(≈4416mm³)")
+check(r['nonman']==0, "最大のみモードでも水密")
+
+st.cavity_mode='THRESHOLD'; st.min_cavity_size=6.0  # 球径6mm(≈113mm³)未満を埋める
+core.sync_modifier(obj, st)
+rt = analyze(obj)
+print("   THRESHOLD 6mm:", rt)
+check(rt['shells']==3, "サイズ指定: 小空洞のみ削除で3シェル")
+
+st.cavity_mode='ALL'       # 全空洞を残す
+core.sync_modifier(obj, st)
+r0 = analyze(obj)
+print("   ALL:", r0)
+check(r0['shells']==4, "全て残す: 4シェル")
+check(r0['vol'] < r['vol'], "小空洞のぶん体積が減る")
+st.cavity_mode='LARGEST'
+
+print("\n==== RESULT:", "ALL PASS" if not FAIL else f"{len(FAIL)} FAIL: {FAIL}")
+hollowkit.unregister()
