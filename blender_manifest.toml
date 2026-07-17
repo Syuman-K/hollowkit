@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "hollowkit"
-version = "0.3.0"
+version = "0.4.0"
 name = "HollowKit"
 tagline = "Hollow meshes and drill drain holes for resin printing"
 maintainer = "GarageKit <zhuwanchuanyuan@gmail.com>"

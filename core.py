@@ -22,7 +22,7 @@ from mathutils import Vector
 # ---- 定数 -------------------------------------------------------------------
 
 NODE_GROUP = "HollowKit"          # 共有ノードグループ名
-NG_VERSION = 4                    # ノードグループ構造のバージョン(変更時に再生成)
+NG_VERSION = 5                    # ノードグループ構造のバージョン(変更時に再生成)
 MODIFIER = "HollowKit"            # 各オブジェクトに付くモディファイア名
 HOLE_COLL_PREFIX = "HK_穴_"       # オブジェクトごとの穴マーカーコレクション接頭辞
 HOLE_MARKER_PREFIX = "HK_穴マーカー"
@@ -154,6 +154,24 @@ def _build_node_group():
 
     def gi(name):
         return gin.outputs[name]
+
+    def sampled_rotation(instances_out):
+        """マーカーインスタンスの回転を取り出すフィールドを作る。
+
+        Instances to Points は回転属性を運ばないため、Instance on Points の
+        Rotation に Input Instance Rotation を直結すると常に単位回転になる
+        (v0.3 までのバグ)。ポイント index = 元インスタンス index を利用し、
+        Sample Index(QUATERNION, INSTANCE ドメイン)で元から回転を引く。
+        """
+        rot = N("GeometryNodeInputInstanceRotation")
+        idx = N("GeometryNodeInputIndex")
+        si = N("GeometryNodeSampleIndex")
+        si.data_type = 'QUATERNION'
+        si.domain = 'INSTANCE'
+        L(instances_out, si.inputs["Geometry"])
+        L(rot.outputs["Rotation"], si.inputs["Value"])
+        L(idx.outputs["Index"], si.inputs["Index"])
+        return si.outputs["Value"]
 
     # === 中空化パス =========================================================
     sdf = N("GeometryNodeMeshToSDFGrid")
@@ -299,11 +317,10 @@ def _build_node_group():
     L(s_cyl.outputs["Mesh"], s_tr.inputs["Geometry"])
     L(s_off.outputs["Vector"], s_tr.inputs["Translation"])
 
-    s_rot = N("GeometryNodeInputInstanceRotation")
     s_iop = N("GeometryNodeInstanceOnPoints")
     L(s_i2p.outputs["Points"], s_iop.inputs["Points"])
     L(s_tr.outputs["Geometry"], s_iop.inputs["Instance"])
-    L(s_rot.outputs["Rotation"], s_iop.inputs["Rotation"])
+    L(sampled_rotation(s_col.outputs["Instances"]), s_iop.inputs["Rotation"])
     s_real = N("GeometryNodeRealizeInstances")
     L(s_iop.outputs["Instances"], s_real.inputs["Geometry"])
 
@@ -357,11 +374,24 @@ def _build_node_group():
     L(radius.outputs[0], cyl.inputs["Radius"])
     L(gi(S_HOLE_LEN), cyl.inputs["Depth"])
 
-    inst_rot = N("GeometryNodeInputInstanceRotation")
+    # ドリルはマーカー位置から矢印(+Z)方向へ掘る。マーカーが表面ぴったりに
+    # あっても壁を確実に切れるよう、後方に穴径ぶんだけはみ出させる。
+    h_half = N("ShaderNodeMath"); h_half.operation = 'DIVIDE'
+    h_half.inputs[1].default_value = 2.0
+    L(gi(S_HOLE_LEN), h_half.inputs[0])
+    h_back = N("ShaderNodeMath"); h_back.operation = 'SUBTRACT'
+    L(h_half.outputs[0], h_back.inputs[0])
+    L(gi(S_HOLE_DIA), h_back.inputs[1])
+    h_off = N("ShaderNodeCombineXYZ")
+    L(h_back.outputs[0], h_off.inputs["Z"])
+    h_tr = N("GeometryNodeTransform")
+    L(cyl.outputs["Mesh"], h_tr.inputs["Geometry"])
+    L(h_off.outputs["Vector"], h_tr.inputs["Translation"])
+
     iop = N("GeometryNodeInstanceOnPoints")
     L(i2p.outputs["Points"], iop.inputs["Points"])
-    L(cyl.outputs["Mesh"], iop.inputs["Instance"])
-    L(inst_rot.outputs["Rotation"], iop.inputs["Rotation"])
+    L(h_tr.outputs["Geometry"], iop.inputs["Instance"])
+    L(sampled_rotation(colinfo.outputs["Instances"]), iop.inputs["Rotation"])
 
     realize = N("GeometryNodeRealizeInstances")
     L(iop.outputs["Instances"], realize.inputs["Geometry"])

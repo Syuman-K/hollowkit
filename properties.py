@@ -132,8 +132,8 @@ class HollowKitSettings(PropertyGroup):
     hole_length: FloatProperty(
         name="長さ",
         default=100.0, min=0.0, soft_max=1000.0, precision=3, unit='LENGTH',
-        description="ドリル(シリンダー)の長さ。マーカーを中心に両方向へ"
-                    "伸びる。壁を確実に貫くだけの長さが必要",
+        description="ドリルの長さ。マーカー位置から矢印の方向へこの長さぶん"
+                    "掘る。貫通させたい壁まで届く長さにする",
         update=_sync_update)
 
 
